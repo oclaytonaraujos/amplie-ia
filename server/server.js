@@ -328,6 +328,19 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+/* ── Static Files (Frontend) ── */
+// Em produção (Docker), servimos a pasta 'dist' que contém o build do React/Vite
+const distPath = path.resolve('dist')
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath))
+  // Qualquer rota que não comece com /api retorna o index.html do frontend (para suportar o React Router)
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(distPath, 'index.html'))
+    }
+  })
+}
+
 /* ── Start ── */
 app.listen(PORT, () => {
   console.log(`\n🚀 Amplie IA Backend rodando em http://localhost:${PORT}`)
