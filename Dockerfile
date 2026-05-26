@@ -1,5 +1,5 @@
 # Estágio 1: Build do Frontend (Vite/React)
-FROM node:20-alpine AS build-frontend
+FROM node:22-alpine AS build-frontend
 WORKDIR /app
 
 # Copia os arquivos de dependência do frontend
@@ -11,7 +11,7 @@ COPY . .
 RUN npm run build
 
 # Estágio 2: Setup do Backend (Node.js) e Imagem Final
-FROM node:20-alpine
+FROM node:22-alpine
 WORKDIR /app/server
 
 # Copia os arquivos de dependência do backend
