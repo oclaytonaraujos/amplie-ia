@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { MdOutlineEditNote } from "react-icons/md";
 import { FiSidebar } from "react-icons/fi";
 import { LuMessageCircle } from "react-icons/lu";
@@ -192,8 +193,27 @@ function MessageBubble({ role, content }) {
   return (
     <div className="flex items-start gap-3 message-appear">
       <AvatarLogo />
-      <div className="max-w-[75%] text-[15px] leading-relaxed pt-1 whitespace-pre-wrap">
-        {content}
+      <div className="max-w-[75%] text-[15px] leading-relaxed pt-1 prose-chat">
+        <ReactMarkdown
+          components={{
+            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+            strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
+            em: ({ children }) => <em className="italic">{children}</em>,
+            ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+            ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+            li: ({ children }) => <li className="text-gray-200">{children}</li>,
+            code: ({ inline, children }) =>
+              inline
+                ? <code className="bg-white/10 rounded px-1 py-0.5 text-sm font-mono text-pink-300">{children}</code>
+                : <pre className="bg-white/5 rounded-lg p-3 my-2 overflow-x-auto text-sm font-mono text-gray-200"><code>{children}</code></pre>,
+            h1: ({ children }) => <h1 className="text-xl font-bold text-white mb-2 mt-3">{children}</h1>,
+            h2: ({ children }) => <h2 className="text-lg font-bold text-white mb-2 mt-3">{children}</h2>,
+            h3: ({ children }) => <h3 className="text-base font-semibold text-white mb-1 mt-2">{children}</h3>,
+            blockquote: ({ children }) => <blockquote className="border-l-2 border-pink-500 pl-3 my-2 text-gray-400 italic">{children}</blockquote>,
+          }}
+        >
+          {content}
+        </ReactMarkdown>
       </div>
     </div>
   )
