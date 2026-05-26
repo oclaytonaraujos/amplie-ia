@@ -67,7 +67,55 @@ const upload = multer({
 const SYSTEM_INSTRUCTION =
   'Você é a Amplie IA, uma assistente inteligente, prestativa e concisa. ' +
   'Responda sempre em português brasileiro, de forma clara e objetiva. ' +
-  'Use formatação quando apropriado para melhorar a legibilidade.'
+  'Use formatação quando apropriado para melhorar a legibilidade. ' +
+  'Quando o usuário pedir para gerar, criar ou desenhar uma imagem, apenas descreva brevemente o que a imagem mostrará e diga que está gerando — o sistema cuidará da geração automaticamente.'
+
+/* ── Detectar se a mensagem é um pedido de geração de imagem ── */
+const IMAGE_REQUEST_REGEX = /\b(ger[ea]|cri[ae]|fa[çz]|fa?ça?|desenh[ae]|ilustr[ae]|produz[ae]|monstr[ae]|mostre?|faz|faz uma|cre|make|draw|creat|generat|imagin|paint|sketch)\b.{0,80}\b(imagem|foto|fotografia|ilustração|desenho|arte|picture|image|photo|illustration|artwork|visual|figura|pintura|retrato|wallpaper|banner|logo|ícone|icon)\b/i
+
+function isImageRequest(text) {
+  // Remove file/image attachments from detection
+  const clean = text
+    .replace(/\[FILE_ATTACHMENT:[\s\S]*?\/FILE_ATTACHMENT\]/g, '')
+    .replace(/\[IMAGE_ATTACHMENT:[\s\S]*?\/IMAGE_ATTACHMENT\]/g, '')
+    .trim()
+  return IMAGE_REQUEST_REGEX.test(clean)
+}
+
+/* ── Traduzir e refinar o prompt da imagem via Gemini ── */
+async function buildImagePrompt(userText) {
+  try {
+    const result = await callWithRetry(() =>
+      ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{
+          role: 'user',
+          parts: [{
+            text: `Extract and translate to English the image description from this message, making it a high-quality image generation prompt (detailed, descriptive, artistic style if applicable). Return ONLY the prompt text, nothing else.\n\nMessage: "${userText}"`,
+          }],
+        }],
+      })
+    )
+    return result.text.trim().replace(/^["']|["']$/g, '')
+  } catch {
+    // Fallback: use original text
+    return userText.replace(/\b(ger[ea]|cri[ae]|fa[çz]|desenh[ae]|ilustr[ae])\b.{0,20}\b(imagem|foto|ilustração|desenho|arte)\b.{0,20}\s*/i, '').trim()
+  }
+}
+
+/* ── Gerar URL de imagem via Pollinations.ai ── */
+function buildPollinationsUrl(prompt, options = {}) {
+  const {
+    width = 1024,
+    height = 1024,
+    model = 'flux',
+    seed = Math.floor(Math.random() * 999999),
+  } = options
+  const encoded = encodeURIComponent(prompt)
+  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&model=${model}&seed=${seed}&nologo=true`
+}
+
+
 
 /* ── Retry helper com backoff exponencial ── */
 async function callWithRetry(fn, maxRetries = 3) {
@@ -294,24 +342,42 @@ app.post('/api/chat', authenticate, async (req, res) => {
       })
     }
 
-    // Separar histórico e mensagem atual
-    const history = toGeminiContents(messages.slice(0, -1))
-    const lastMsgParts = toGeminiContents([lastUserMessage])[0].parts
+    /* ── Verificar se é pedido de geração de imagem ── */
+    const userText = typeof lastUserMessage.content === 'string' ? lastUserMessage.content : ''
+    let responseText
 
-    // Criar sessão de chat com o novo SDK @google/genai
-    const chat = ai.chats.create({
-      model: GEMINI_MODEL,
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      },
-      history,
-    })
+    if (isImageRequest(userText)) {
+      console.log('🎨 Pedido de imagem detectado — chamando Pollinations.ai')
 
-    // Enviar mensagem (com retry automático em caso de 429)
-    const result = await callWithRetry(() => chat.sendMessage({ message: lastMsgParts }))
-    const responseText = result.text
+      // Traduzir e refinar o prompt via Gemini
+      const imagePrompt = await buildImagePrompt(userText)
+      console.log(`📝 Prompt de imagem: "${imagePrompt}"`)
+
+      // Montar URL da Pollinations
+      const imageUrl = buildPollinationsUrl(imagePrompt)
+
+      // Montar resposta com a imagem em Markdown
+      responseText = `Aqui está a imagem gerada para você! ✨\n\n![${imagePrompt}](${imageUrl})\n\n*Prompt utilizado: "${imagePrompt}"*`
+    } else {
+      // Separar histórico e mensagem atual
+      const history = toGeminiContents(messages.slice(0, -1))
+      const lastMsgParts = toGeminiContents([lastUserMessage])[0].parts
+
+      // Criar sessão de chat com o novo SDK @google/genai
+      const chat = ai.chats.create({
+        model: GEMINI_MODEL,
+        config: {
+          systemInstruction: SYSTEM_INSTRUCTION,
+          temperature: 0.7,
+          maxOutputTokens: 2048,
+        },
+        history,
+      })
+
+      // Enviar mensagem (com retry automático em caso de 429)
+      const result = await callWithRetry(() => chat.sendMessage({ message: lastMsgParts }))
+      responseText = result.text
+    }
 
     if (conversationId) {
       await supabase.from('messages').insert({
@@ -355,7 +421,7 @@ app.post('/api/chat', authenticate, async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('=== ERRO na API Gemini ===')
+    console.error('=== ERRO no Chat/Imagem ===')
     console.error('Mensagem:', err.message)
     console.error('Status HTTP:', err.status)
     console.error('Código:', err.code)
@@ -377,6 +443,37 @@ app.post('/api/chat', authenticate, async (req, res) => {
     return res.status(500).json({ error: 'Erro interno do servidor.' })
   }
 })
+
+/* ══════════════════════════════════════════════════
+   ENDPOINT DIRETO: GERAR IMAGEM
+   ══════════════════════════════════════════════════ */
+
+app.post('/api/generate-image', authenticate, async (req, res) => {
+  try {
+    const { prompt, width = 1024, height = 1024, model = 'flux' } = req.body
+
+    if (!prompt || typeof prompt !== 'string') {
+      return res.status(400).json({ error: 'O campo "prompt" é obrigatório.' })
+    }
+
+    // Traduzir e refinar prompt via Gemini
+    const imagePrompt = await buildImagePrompt(prompt)
+    const imageUrl = buildPollinationsUrl(imagePrompt, { width, height, model })
+
+    console.log(`🎨 Imagem gerada: ${imageUrl}`)
+
+    return res.json({
+      url: imageUrl,
+      prompt: imagePrompt,
+      originalPrompt: prompt,
+    })
+  } catch (err) {
+    console.error('Erro ao gerar imagem:', err.message)
+    return res.status(500).json({ error: 'Erro ao gerar imagem.' })
+  }
+})
+
+
 
 /* ══════════════════════════════════════════════════
    AUDIO TRANSCRIPTION (Gemini multimodal)

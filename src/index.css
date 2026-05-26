@@ -92,3 +92,15 @@ textarea {
   resize: none;
   field-sizing: content;
 }
+
+/* ── Speak / TTS wave animation ── */
+@keyframes speakWave {
+  from {
+    transform: scaleY(0.4);
+    opacity: 0.6;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}

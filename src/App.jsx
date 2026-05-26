@@ -137,6 +137,106 @@ function TypingIndicator() {
   )
 }
 
+/* ─────────────────── Audio Speak Button ──────────────────── */
+
+function SpeakButton({ text }) {
+  const [speaking, setSpeaking] = useState(false)
+  const utteranceRef = useRef(null)
+
+  // Strip markdown for clean TTS
+  function stripMarkdown(md) {
+    return md
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/#{1,6}\s+/g, '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\*(.*?)\*/g, '$1')
+      .replace(/~~(.*?)~~/g, '$1')
+      .replace(/>\s+/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[-*+]\s+/g, '')
+      .replace(/\d+\.\s+/g, '')
+      .replace(/\n{2,}/g, '. ')
+      .replace(/\n/g, ' ')
+      .trim()
+  }
+
+  function handleSpeak() {
+    if (!window.speechSynthesis) return
+
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+
+    const clean = stripMarkdown(text)
+    const utterance = new SpeechSynthesisUtterance(clean)
+    utterance.lang = 'pt-BR'
+    utterance.rate = 1.0
+    utterance.pitch = 1.0
+
+    // Try to pick a Portuguese voice
+    const voices = window.speechSynthesis.getVoices()
+    const ptVoice = voices.find(v => v.lang.startsWith('pt'))
+    if (ptVoice) utterance.voice = ptVoice
+
+    utterance.onstart = () => setSpeaking(true)
+    utterance.onend = () => setSpeaking(false)
+    utterance.onerror = () => setSpeaking(false)
+
+    utteranceRef.current = utterance
+    window.speechSynthesis.speak(utterance)
+  }
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (utteranceRef.current) window.speechSynthesis.cancel()
+    }
+  }, [])
+
+  return (
+    <button
+      onClick={handleSpeak}
+      title={speaking ? 'Parar áudio' : 'Ouvir resposta'}
+      aria-label={speaking ? 'Parar áudio' : 'Ouvir resposta'}
+      className={`
+        group mt-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
+        text-xs font-medium transition-all duration-200
+        border
+        ${speaking
+          ? 'bg-pink-500/20 border-pink-500/40 text-pink-400'
+          : 'bg-white/[0.04] border-white/[0.06] text-gray-500 hover:bg-white/[0.08] hover:border-white/10 hover:text-gray-300'
+        }
+      `}
+    >
+      {speaking ? (
+        /* Sound wave animation when speaking */
+        <span className="flex items-end gap-[2px] h-3.5">
+          {[1, 2, 3, 4].map(i => (
+            <span
+              key={i}
+              className="w-[2.5px] rounded-full bg-pink-400"
+              style={{
+                animation: `speakWave 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
+                height: `${6 + i * 2}px`,
+              }}
+            />
+          ))}
+        </span>
+      ) : (
+        /* Speaker icon */
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+          <path d="M10.5 3.75a.75.75 0 0 0-1.264-.546L5.203 7H2.667a.75.75 0 0 0-.7.48A6.985 6.985 0 0 0 1.5 10c0 .887.165 1.737.468 2.52.111.29.39.48.7.48h2.535l4.033 3.796a.75.75 0 0 0 1.264-.546V3.75ZM16.45 5.05a.75.75 0 0 0-1.06 1.061 5.5 5.5 0 0 1 0 7.778.75.75 0 0 0 1.06 1.06 7 7 0 0 0 0-9.899Z" />
+          <path d="M14.329 7.172a.75.75 0 0 0-1.061 1.06 2.5 2.5 0 0 1 0 3.536.75.75 0 0 0 1.06 1.06 4 4 0 0 0 0-5.656Z" />
+        </svg>
+      )}
+      <span>{speaking ? 'Parar' : 'Ouvir'}</span>
+    </button>
+  )
+}
+
 function MessageBubble({ role, content }) {
   if (role === 'user') {
     // Parse normal files
@@ -193,12 +293,12 @@ function MessageBubble({ role, content }) {
   return (
     <div className="flex items-start gap-3 message-appear">
       <AvatarLogo />
-      <div className="max-w-[75%] text-[15px] leading-relaxed pt-1 prose-chat">
+      <div className="max-w-[80%] text-[15px] leading-relaxed pt-1 prose-chat">
         <ReactMarkdown
           components={{
             p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
             strong: ({ children }) => <strong className="font-bold text-white" style={{ textShadow: '0 0 8px rgba(255,255,255,0.35)' }}>{children}</strong>,
-            em: ({ children }) => <em className="italic">{children}</em>,
+            em: ({ children }) => <em className="italic text-gray-400">{children}</em>,
             ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
             ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
             li: ({ children }) => <li className="text-gray-200">{children}</li>,
@@ -210,13 +310,114 @@ function MessageBubble({ role, content }) {
             h2: ({ children }) => <h2 className="text-lg font-bold text-white mb-2 mt-3">{children}</h2>,
             h3: ({ children }) => <h3 className="text-base font-semibold text-white mb-1 mt-2">{children}</h3>,
             blockquote: ({ children }) => <blockquote className="border-l-2 border-pink-500 pl-3 my-2 text-gray-400 italic">{children}</blockquote>,
+            img: ({ src, alt }) => <GeneratedImage src={src} alt={alt} />,
           }}
         >
           {content}
         </ReactMarkdown>
+        <SpeakButton text={content} />
       </div>
     </div>
   )
+}
+
+/* ─────────────── Generated Image Component ─────────────── */
+
+function GeneratedImage({ src, alt }) {
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState(false)
+  const isAiGenerated = src?.includes('pollinations.ai') || src?.includes('image.pollinations')
+
+  async function handleDownload() {
+    try {
+      const response = await fetch(src)
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `amplie-ia-${Date.now()}.png`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      // Fallback: open in new tab
+      window.open(src, '_blank')
+    }
+  }
+
+  return (
+    <div className="my-3 group">
+      {/* Image container */}
+      <div className="relative rounded-2xl overflow-hidden border border-white/10 bg-white/[0.03] max-w-[480px]"
+        style={{ boxShadow: '0 0 40px rgba(236, 72, 153, 0.08)' }}>
+
+        {/* Loading skeleton */}
+        {!loaded && !error && (
+          <div className="w-full aspect-square bg-white/[0.04] animate-pulse flex flex-col items-center justify-center gap-3">
+            <div className="flex items-end gap-1">
+              {[1,2,3,4,5].map(i => (
+                <div key={i} className="w-1 rounded-full bg-pink-500/40"
+                  style={{ height: `${12 + i * 4}px`, animation: `speakWave 0.6s ease-in-out ${i*0.1}s infinite alternate` }} />
+              ))}
+            </div>
+            <span className="text-xs text-gray-500">Gerando imagem...</span>
+          </div>
+        )}
+
+        {/* Error state */}
+        {error && (
+          <div className="w-full aspect-square flex flex-col items-center justify-center gap-2 text-gray-500">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 opacity-40">
+              <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12ZM12 8.25a.75.75 0 0 1 .75.75v3.75a.75.75 0 0 1-1.5 0V9a.75.75 0 0 1 .75-.75Zm0 8.25a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z" clipRule="evenodd" />
+            </svg>
+            <span className="text-sm">Não foi possível carregar a imagem</span>
+            <a href={src} target="_blank" rel="noreferrer" className="text-xs text-pink-400 hover:underline">
+              Abrir link diretamente →
+            </a>
+          </div>
+        )}
+
+        {/* The image */}
+        <img
+          src={src}
+          alt={alt || 'Imagem gerada pela IA'}
+          className={`w-full object-cover transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0 absolute inset-0'}`}
+          onLoad={() => setLoaded(true)}
+          onError={() => { setError(true); setLoaded(false) }}
+          crossOrigin="anonymous"
+        />
+
+        {/* AI Badge */}
+        {isAiGenerated && loaded && (
+          <div className="absolute top-2.5 left-2.5">
+            <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-black/60 backdrop-blur-sm text-[10px] font-semibold text-pink-300 border border-pink-500/30">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-2.5 h-2.5">
+                <path fillRule="evenodd" d="M8 1.75a.75.75 0 0 1 .692.462l1.41 3.393 3.664.293a.75.75 0 0 1 .428 1.317l-2.791 2.39.853 3.575a.75.75 0 0 1-1.12.814L8 11.716l-3.136 1.278a.75.75 0 0 1-1.12-.814l.853-3.576-2.79-2.39a.75.75 0 0 1 .427-1.316l3.663-.293L7.308 2.21A.75.75 0 0 1 8 1.75Z" clipRule="evenodd" />
+              </svg>
+              IA Gerada
+            </span>
+          </div>
+        )}
+
+        {/* Hover overlay with download */}
+        {loaded && (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end p-3">
+            <button
+              onClick={handleDownload}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 backdrop-blur-sm border border-white/20 text-white text-xs font-medium hover:bg-white/25 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5">
+                <path d="M8.75 2.75a.75.75 0 0 0-1.5 0v5.69L5.03 6.22a.75.75 0 0 0-1.06 1.06l3.5 3.5a.75.75 0 0 0 1.06 0l3.5-3.5a.75.75 0 0 0-1.06-1.06L8.75 8.44V2.75Z" />
+                <path d="M3.5 9.75a.75.75 0 0 0-1.5 0v1.5A2.75 2.75 0 0 0 4.75 14h6.5A2.75 2.75 0 0 0 14 11.25v-1.5a.75.75 0 0 0-1.5 0v1.5c0 .69-.56 1.25-1.25 1.25h-6.5c-.69 0-1.25-.56-1.25-1.25v-1.5Z" />
+              </svg>
+              Baixar
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+
 }
 
 function WelcomeScreen({ onSuggestion }) {
