@@ -202,37 +202,18 @@ function SpeakButton({ text }) {
       title={speaking ? 'Parar áudio' : 'Ouvir resposta'}
       aria-label={speaking ? 'Parar áudio' : 'Ouvir resposta'}
       className={`
-        group mt-2 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg
-        text-xs font-medium transition-all duration-200
-        border
+        mt-1.5 flex items-center justify-center p-1 rounded-md transition-all duration-200 bg-transparent border-0 outline-none
         ${speaking
-          ? 'bg-pink-500/20 border-pink-500/40 text-pink-400'
-          : 'bg-white/[0.04] border-white/[0.06] text-gray-500 hover:bg-white/[0.08] hover:border-white/10 hover:text-gray-300'
+          ? 'text-pink-400 hover:text-pink-300 scale-110 animate-pulse'
+          : 'text-gray-500 hover:text-gray-300 hover:scale-105'
         }
       `}
+      style={{ minWidth: '24px', minHeight: '24px' }}
     >
-      {speaking ? (
-        /* Sound wave animation when speaking */
-        <span className="flex items-end gap-[2px] h-3.5">
-          {[1, 2, 3, 4].map(i => (
-            <span
-              key={i}
-              className="w-[2.5px] rounded-full bg-pink-400"
-              style={{
-                animation: `speakWave 0.8s ease-in-out ${i * 0.1}s infinite alternate`,
-                height: `${6 + i * 2}px`,
-              }}
-            />
-          ))}
-        </span>
-      ) : (
-        /* Speaker icon */
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-          <path d="M10.5 3.75a.75.75 0 0 0-1.264-.546L5.203 7H2.667a.75.75 0 0 0-.7.48A6.985 6.985 0 0 0 1.5 10c0 .887.165 1.737.468 2.52.111.29.39.48.7.48h2.535l4.033 3.796a.75.75 0 0 0 1.264-.546V3.75ZM16.45 5.05a.75.75 0 0 0-1.06 1.061 5.5 5.5 0 0 1 0 7.778.75.75 0 0 0 1.06 1.06 7 7 0 0 0 0-9.899Z" />
-          <path d="M14.329 7.172a.75.75 0 0 0-1.061 1.06 2.5 2.5 0 0 1 0 3.536.75.75 0 0 0 1.06 1.06 4 4 0 0 0 0-5.656Z" />
-        </svg>
-      )}
-      <span>{speaking ? 'Parar' : 'Ouvir'}</span>
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path d="M7 4a3 3 0 0 1 6 0v6a3 3 0 1 1-6 0V4Z" />
+        <path d="M5.5 9.643a.75.75 0 0 0-1.5 0V10c0 3.06 2.29 5.585 5.25 5.954V17.5h-1.5a.75.75 0 0 0 0 1.5h4.5a.75.75 0 0 0 0-1.5h-1.5v-1.546A6.001 6.001 0 0 0 16 10v-.357a.75.75 0 0 0-1.5 0V10a4.5 4.5 0 0 1-9 0v-.357Z" />
+      </svg>
     </button>
   )
 }
