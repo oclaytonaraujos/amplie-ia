@@ -1,15 +1,15 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
-import OpenAI from 'openai'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 import { createClient } from '@supabase/supabase-js'
 import multer from 'multer'
 import fs from 'fs'
 import path from 'path'
 
 /* ── Validate env ── */
-if (!process.env.OPENAI_API_KEY) {
-  console.error('❌ OPENAI_API_KEY não encontrada. Crie um arquivo .env com sua chave.')
+if (!process.env.GEMINI_API_KEY) {
+  console.error('❌ GEMINI_API_KEY não encontrada. Crie um arquivo .env com sua chave.')
   process.exit(1)
 }
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
@@ -21,9 +21,8 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
 const app = express()
 const PORT = process.env.PORT || 3001
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
@@ -66,13 +65,10 @@ const upload = multer({
 })
 
 /* ── System prompt ── */
-const SYSTEM_MESSAGE = {
-  role: 'system',
-  content:
-    'Você é a Amplie IA, uma assistente inteligente, prestativa e concisa. ' +
-    'Responda sempre em português brasileiro, de forma clara e objetiva. ' +
-    'Use formatação quando apropriado para melhorar a legibilidade.',
-}
+const SYSTEM_INSTRUCTION =
+  'Você é a Amplie IA, uma assistente inteligente, prestativa e concisa. ' +
+  'Responda sempre em português brasileiro, de forma clara e objetiva. ' +
+  'Use formatação quando apropriado para melhorar a legibilidade.'
 
 /* ══════════════════════════════════════════════════
    MIDDLEWARE DE AUTENTICAÇÃO
@@ -206,6 +202,56 @@ app.get('/api/conversations/:id/messages', authenticate, async (req, res) => {
 })
 
 /* ══════════════════════════════════════════════════
+   HELPERS — converter mensagens para o formato Gemini
+   ══════════════════════════════════════════════════ */
+
+/**
+ * Converte um array de mensagens no formato OpenAI ({role, content})
+ * para o formato Gemini ({role: 'user'|'model', parts: [...]}).
+ *
+ * Suporta:
+ *  - Texto simples
+ *  - Imagens inline codificadas em base64 via [IMAGE_ATTACHMENT:...]data:image/...[/IMAGE_ATTACHMENT]
+ *  - Anexos de arquivo como texto
+ */
+function toGeminiHistory(messages) {
+  return messages.map((msg) => {
+    const role = msg.role === 'assistant' ? 'model' : 'user'
+    const content = msg.content
+
+    if (typeof content === 'string' && content.includes('[IMAGE_ATTACHMENT:')) {
+      const parts = []
+      const regex = /\[IMAGE_ATTACHMENT:.*?\](data:image\/(.*?);base64,([A-Za-z0-9+/=]+))\[\/IMAGE_ATTACHMENT\]/g
+      let lastIndex = 0
+      let match
+
+      while ((match = regex.exec(content)) !== null) {
+        if (match.index > lastIndex) {
+          const text = content.substring(lastIndex, match.index).trim()
+          if (text) parts.push({ text })
+        }
+        parts.push({
+          inlineData: {
+            mimeType: `image/${match[2]}`,
+            data: match[3],
+          },
+        })
+        lastIndex = regex.lastIndex
+      }
+
+      if (lastIndex < content.length) {
+        const text = content.substring(lastIndex).trim()
+        if (text) parts.push({ text })
+      }
+
+      return { role, parts }
+    }
+
+    return { role, parts: [{ text: content || '' }] }
+  })
+}
+
+/* ══════════════════════════════════════════════════
    CHAT ENDPOINT (with persistence)
    ══════════════════════════════════════════════════ */
 
@@ -243,45 +289,36 @@ app.post('/api/chat', authenticate, async (req, res) => {
       })
     }
 
-    // Prepend system message and call OpenAI
-    const fullMessages = [SYSTEM_MESSAGE, ...messages].map((msg) => {
-      if (typeof msg.content === 'string' && msg.content.includes('[IMAGE_ATTACHMENT:')) {
-        const parts = []
-        const regex = /\[IMAGE_ATTACHMENT:.*?\](data:image\/.*?;base64,[A-Za-z0-9+/=]+)\[\/IMAGE_ATTACHMENT\]/g
-        let lastIndex = 0
-        let match
+    // Separar histórico (sem a última mensagem) e a mensagem atual
+    const history = toGeminiHistory(messages.slice(0, -1))
+    const lastMsgParts = toGeminiHistory([lastUserMessage])[0].parts
 
-        while ((match = regex.exec(msg.content)) !== null) {
-          if (match.index > lastIndex) {
-            parts.push({ type: 'text', text: msg.content.substring(lastIndex, match.index) })
-          }
-          parts.push({ type: 'image_url', image_url: { url: match[1] } })
-          lastIndex = regex.lastIndex
-        }
-        if (lastIndex < msg.content.length) {
-          parts.push({ type: 'text', text: msg.content.substring(lastIndex) })
-        }
-        return { ...msg, content: parts }
-      }
-      return msg
+    // Iniciar o modelo com system instruction
+    const model = genAI.getGenerativeModel({
+      model: GEMINI_MODEL,
+      systemInstruction: SYSTEM_INSTRUCTION,
     })
 
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-      messages: fullMessages,
-      temperature: 0.7,
-      max_tokens: 2048,
+    // Criar sessão de chat com histórico
+    const chat = model.startChat({
+      history,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2048,
+      },
     })
 
-    const assistantMessage = completion.choices[0].message
+    // Enviar a mensagem atual
+    const result = await chat.sendMessage(lastMsgParts)
+    const responseText = result.response.text()
 
     // Salvar resposta do assistente e atualizar título/updated_at
     if (conversationId) {
       await supabase.from('messages').insert({
         conversation_id: conversationId,
         user_id: req.userId,
-        role: assistantMessage.role,
-        content: assistantMessage.content,
+        role: 'assistant',
+        content: responseText,
       })
 
       // Atualizar título automaticamente se ainda é o padrão
@@ -315,17 +352,17 @@ app.post('/api/chat', authenticate, async (req, res) => {
 
     return res.json({
       message: {
-        role: assistantMessage.role,
-        content: assistantMessage.content,
+        role: 'assistant',
+        content: responseText,
       },
     })
   } catch (err) {
-    console.error('Erro na API OpenAI:', err.message)
+    console.error('Erro na API Gemini:', err.message)
 
-    if (err.status === 401) {
+    if (err.status === 401 || err.message?.includes('API key')) {
       return res.status(401).json({ error: 'Chave da API inválida.' })
     }
-    if (err.status === 429) {
+    if (err.status === 429 || err.message?.includes('quota')) {
       return res.status(429).json({ error: 'Limite de requisições excedido. Tente novamente em breve.' })
     }
 
@@ -334,7 +371,8 @@ app.post('/api/chat', authenticate, async (req, res) => {
 })
 
 /* ══════════════════════════════════════════════════
-   AUDIO TRANSCRIPTION (Whisper)
+   AUDIO TRANSCRIPTION (Gemini multimodal)
+   Envia o áudio diretamente para o Gemini e pede a transcrição.
    ══════════════════════════════════════════════════ */
 
 app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, res) => {
@@ -344,20 +382,44 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
     }
 
     const filePath = req.file.path
-    const ext = req.file.originalname?.split('.').pop() || 'webm'
+    const ext = (req.file.originalname?.split('.').pop() || 'webm').toLowerCase()
     const newPath = `${filePath}.${ext}`
     fs.renameSync(filePath, newPath)
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(newPath),
-      model: 'whisper-1',
-      language: 'pt',
-    })
+    // Ler o áudio como base64
+    const audioBase64 = fs.readFileSync(newPath, 'base64')
+
+    // Mapear extensão para mime type
+    const mimeMap = {
+      webm: 'audio/webm',
+      mp3: 'audio/mpeg',
+      mp4: 'audio/mp4',
+      wav: 'audio/wav',
+      ogg: 'audio/ogg',
+      m4a: 'audio/mp4',
+      flac: 'audio/flac',
+    }
+    const mimeType = mimeMap[ext] || 'audio/webm'
+
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+
+    const result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType,
+          data: audioBase64,
+        },
+      },
+      {
+        text: 'Transcreva o áudio a seguir com precisão, mantendo o texto exatamente como foi falado, sem adicionar pontuação desnecessária ou interpretar o conteúdo. Responda apenas com a transcrição, sem explicações.',
+      },
+    ])
 
     // Cleanup temp file
-    fs.unlinkSync(newPath)
+    try { fs.unlinkSync(newPath) } catch {}
 
-    return res.json({ text: transcription.text })
+    const text = result.response.text().trim()
+    return res.json({ text })
   } catch (err) {
     console.error('Erro na transcrição:', err.message)
     // Cleanup on error
@@ -445,6 +507,7 @@ if (fs.existsSync(distPath)) {
 /* ── Start ── */
 app.listen(PORT, () => {
   console.log(`\n🚀 Amplie IA Backend rodando em http://localhost:${PORT}`)
+  console.log(`🤖 Modelo Gemini: ${GEMINI_MODEL}`)
   console.log(`📦 Supabase conectado: ${process.env.SUPABASE_URL}`)
   console.log(`🔐 Autenticação JWT ativada em todas as rotas /api\n`)
 })
