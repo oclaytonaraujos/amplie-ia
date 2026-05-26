@@ -22,7 +22,7 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-05-20'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
