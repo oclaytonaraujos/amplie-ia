@@ -2,6 +2,14 @@
 FROM node:22-alpine AS build-frontend
 WORKDIR /app
 
+# Argumentos de build — passados via --build-arg ou variáveis de ambiente no EasyPanel
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+
+# Expõe os ARGs como variáveis de ambiente para o processo de build do Vite
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
+ENV VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
+
 # Copia os arquivos de dependência do frontend
 COPY package*.json ./
 RUN npm install
