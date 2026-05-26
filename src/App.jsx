@@ -580,11 +580,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
               >
                 <div className="flex flex-col items-start min-w-0 flex-1">
                   <span className="text-sm font-medium truncate max-w-[140px] leading-tight">{displayName}</span>
-                  <span className="text-xs text-gray-500">Plus</span>
                 </div>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-500 shrink-0 mr-1">
-                  <path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h11A2.5 2.5 0 0 1 18 4.5v.5H2v-.5ZM2 7h16v8.5A2.5 2.5 0 0 1 15.5 18h-11A2.5 2.5 0 0 1 2 15.5V7Zm6.5 4a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3Z" />
-                </svg>
               </div>
             </button>
           </div>
