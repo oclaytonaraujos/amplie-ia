@@ -1,7 +1,7 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import { GoogleGenAI } from '@google/genai'
 import { createClient } from '@supabase/supabase-js'
 import multer from 'multer'
 import fs from 'fs'
@@ -21,12 +21,11 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
 const app = express()
 const PORT = process.env.PORT || 3001
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash'
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
- * A verificação de token NÃO requer service_role
  */
 const supabaseAuth = createClient(
   process.env.SUPABASE_URL,
@@ -78,7 +77,12 @@ async function callWithRetry(fn, maxRetries = 3) {
       return await fn()
     } catch (err) {
       lastError = err
-      const is429 = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('Resource has been exhausted')
+      const is429 =
+        err.status === 429 ||
+        err.message?.includes('429') ||
+        err.message?.includes('quota') ||
+        err.message?.includes('Resource has been exhausted') ||
+        err.message?.includes('RESOURCE_EXHAUSTED')
       if (!is429 || attempt === maxRetries - 1) throw err
       const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500
       console.warn(`⚠️ Gemini 429 — tentativa ${attempt + 1}/${maxRetries}. Aguardando ${Math.round(delay)}ms...`)
@@ -90,8 +94,6 @@ async function callWithRetry(fn, maxRetries = 3) {
 
 /* ══════════════════════════════════════════════════
    MIDDLEWARE DE AUTENTICAÇÃO
-   Verifica o JWT do usuário em cada requisição protegida.
-   Injeta req.userId e req.accessToken para uso nas rotas.
    ══════════════════════════════════════════════════ */
 
 async function authenticate(req, res, next) {
@@ -103,14 +105,12 @@ async function authenticate(req, res, next) {
   const token = authHeader.replace('Bearer ', '').trim()
 
   try {
-    // Verificar e decodificar o JWT via Supabase
     const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
 
     if (error || !user) {
       return res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' })
     }
 
-    // Injetar dados do usuário na requisição
     req.userId = user.id
     req.accessToken = token
     next()
@@ -124,7 +124,6 @@ async function authenticate(req, res, next) {
    CONVERSATIONS ENDPOINTS
    ══════════════════════════════════════════════════ */
 
-/* ── List conversations (apenas do usuário logado) ── */
 app.get('/api/conversations', authenticate, async (req, res) => {
   try {
     const supabase = createUserClient(req.accessToken)
@@ -132,7 +131,7 @@ app.get('/api/conversations', authenticate, async (req, res) => {
     const { data, error } = await supabase
       .from('conversations')
       .select('id, title, created_at, updated_at')
-      .eq('user_id', req.userId) // double-check além do RLS
+      .eq('user_id', req.userId)
       .order('updated_at', { ascending: false })
 
     if (error) throw error
@@ -143,7 +142,6 @@ app.get('/api/conversations', authenticate, async (req, res) => {
   }
 })
 
-/* ── Create conversation ── */
 app.post('/api/conversations', authenticate, async (req, res) => {
   try {
     const supabase = createUserClient(req.accessToken)
@@ -153,7 +151,7 @@ app.post('/api/conversations', authenticate, async (req, res) => {
       .from('conversations')
       .insert({
         title: title || 'Nova conversa',
-        user_id: req.userId, // sempre o usuário logado
+        user_id: req.userId,
       })
       .select()
       .single()
@@ -166,7 +164,6 @@ app.post('/api/conversations', authenticate, async (req, res) => {
   }
 })
 
-/* ── Delete conversation (apenas a própria) ── */
 app.delete('/api/conversations/:id', authenticate, async (req, res) => {
   try {
     const supabase = createUserClient(req.accessToken)
@@ -176,7 +173,7 @@ app.delete('/api/conversations/:id', authenticate, async (req, res) => {
       .from('conversations')
       .delete()
       .eq('id', id)
-      .eq('user_id', req.userId) // garante que só deleta a própria
+      .eq('user_id', req.userId)
 
     if (error) throw error
     return res.json({ success: true })
@@ -186,13 +183,11 @@ app.delete('/api/conversations/:id', authenticate, async (req, res) => {
   }
 })
 
-/* ── Get messages of a conversation (apenas do usuário logado) ── */
 app.get('/api/conversations/:id/messages', authenticate, async (req, res) => {
   try {
     const supabase = createUserClient(req.accessToken)
     const { id } = req.params
 
-    // Primeiro: verificar que a conversa pertence ao usuário
     const { data: conv, error: convError } = await supabase
       .from('conversations')
       .select('id')
@@ -208,7 +203,7 @@ app.get('/api/conversations/:id/messages', authenticate, async (req, res) => {
       .from('messages')
       .select('id, role, content, created_at')
       .eq('conversation_id', id)
-      .eq('user_id', req.userId) // double-check
+      .eq('user_id', req.userId)
       .order('created_at', { ascending: true })
 
     if (error) throw error
@@ -224,15 +219,10 @@ app.get('/api/conversations/:id/messages', authenticate, async (req, res) => {
    ══════════════════════════════════════════════════ */
 
 /**
- * Converte um array de mensagens no formato OpenAI ({role, content})
- * para o formato Gemini ({role: 'user'|'model', parts: [...]}).
- *
- * Suporta:
- *  - Texto simples
- *  - Imagens inline codificadas em base64 via [IMAGE_ATTACHMENT:...]data:image/...[/IMAGE_ATTACHMENT]
- *  - Anexos de arquivo como texto
+ * Converte um array de mensagens {role, content} para o formato Gemini.
+ * Suporta texto simples e imagens inline em base64.
  */
-function toGeminiHistory(messages) {
+function toGeminiContents(messages) {
   return messages.map((msg) => {
     const role = msg.role === 'assistant' ? 'model' : 'user'
     const content = msg.content
@@ -282,10 +272,8 @@ app.post('/api/chat', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'O campo "messages" é obrigatório e deve ser um array.' })
     }
 
-    // Get the last user message
     const lastUserMessage = messages[messages.length - 1]
 
-    // Se temos conversationId, verificar que pertence ao usuário antes de inserir
     if (conversationId) {
       const { data: conv, error: convError } = await supabase
         .from('conversations')
@@ -298,7 +286,6 @@ app.post('/api/chat', authenticate, async (req, res) => {
         return res.status(403).json({ error: 'Conversa não encontrada ou sem permissão.' })
       }
 
-      // Salvar mensagem do usuário
       await supabase.from('messages').insert({
         conversation_id: conversationId,
         user_id: req.userId,
@@ -307,30 +294,25 @@ app.post('/api/chat', authenticate, async (req, res) => {
       })
     }
 
-    // Separar histórico (sem a última mensagem) e a mensagem atual
-    const history = toGeminiHistory(messages.slice(0, -1))
-    const lastMsgParts = toGeminiHistory([lastUserMessage])[0].parts
+    // Separar histórico e mensagem atual
+    const history = toGeminiContents(messages.slice(0, -1))
+    const lastMsgParts = toGeminiContents([lastUserMessage])[0].parts
 
-    // Iniciar o modelo com system instruction
-    const model = genAI.getGenerativeModel({
+    // Criar sessão de chat com o novo SDK @google/genai
+    const chat = ai.chats.create({
       model: GEMINI_MODEL,
-      systemInstruction: SYSTEM_INSTRUCTION,
-    })
-
-    // Criar sessão de chat com histórico
-    const chat = model.startChat({
-      history,
-      generationConfig: {
+      config: {
+        systemInstruction: SYSTEM_INSTRUCTION,
         temperature: 0.7,
         maxOutputTokens: 2048,
       },
+      history,
     })
 
-    // Enviar a mensagem atual (com retry automático em caso de 429)
-    const result = await callWithRetry(() => chat.sendMessage(lastMsgParts))
-    const responseText = result.response.text()
+    // Enviar mensagem (com retry automático em caso de 429)
+    const result = await callWithRetry(() => chat.sendMessage({ message: lastMsgParts }))
+    const responseText = result.text
 
-    // Salvar resposta do assistente e atualizar título/updated_at
     if (conversationId) {
       await supabase.from('messages').insert({
         conversation_id: conversationId,
@@ -339,7 +321,6 @@ app.post('/api/chat', authenticate, async (req, res) => {
         content: responseText,
       })
 
-      // Atualizar título automaticamente se ainda é o padrão
       const { data: conv } = await supabase
         .from('conversations')
         .select('title')
@@ -359,7 +340,6 @@ app.post('/api/chat', authenticate, async (req, res) => {
           .eq('id', conversationId)
           .eq('user_id', req.userId)
       } else {
-        // Trigger updated_at via update fictício (o trigger de banco cuida do timestamp)
         await supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
@@ -375,24 +355,23 @@ app.post('/api/chat', authenticate, async (req, res) => {
       },
     })
   } catch (err) {
-    // Log completo do erro para diagnóstico nos logs do servidor
     console.error('=== ERRO na API Gemini ===')
     console.error('Mensagem:', err.message)
     console.error('Status HTTP:', err.status)
     console.error('Código:', err.code)
-    console.error('Stack:', err.stack)
     if (err.errorDetails) console.error('Detalhes:', JSON.stringify(err.errorDetails))
 
-    if (err.status === 401 || err.message?.includes('API key') || err.message?.includes('INVALID_ARGUMENT')) {
+    if (err.status === 401 || err.message?.includes('API key') || err.message?.includes('API_KEY')) {
       return res.status(401).json({ error: 'Chave da API inválida.' })
     }
-    const is429 = err.status === 429 || err.message?.includes('quota') || err.message?.includes('Resource has been exhausted') || err.message?.includes('429')
+    const is429 =
+      err.status === 429 ||
+      err.message?.includes('quota') ||
+      err.message?.includes('Resource has been exhausted') ||
+      err.message?.includes('RESOURCE_EXHAUSTED') ||
+      err.message?.includes('429')
     if (is429) {
-      console.error('Gemini quota excedida após retries:', err.message)
       return res.status(429).json({ error: 'Limite de uso da IA atingido. Aguarde alguns segundos e tente novamente.' })
-    }
-    if (err.status === 404 || err.message?.includes('not found') || err.message?.includes('404')) {
-      return res.status(500).json({ error: `Modelo "${GEMINI_MODEL}" não encontrado. Verifique a variável GEMINI_MODEL.` })
     }
 
     return res.status(500).json({ error: 'Erro interno do servidor.' })
@@ -401,7 +380,6 @@ app.post('/api/chat', authenticate, async (req, res) => {
 
 /* ══════════════════════════════════════════════════
    AUDIO TRANSCRIPTION (Gemini multimodal)
-   Envia o áudio diretamente para o Gemini e pede a transcrição.
    ══════════════════════════════════════════════════ */
 
 app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, res) => {
@@ -415,10 +393,8 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
     const newPath = `${filePath}.${ext}`
     fs.renameSync(filePath, newPath)
 
-    // Ler o áudio como base64
     const audioBase64 = fs.readFileSync(newPath, 'base64')
 
-    // Mapear extensão para mime type
     const mimeMap = {
       webm: 'audio/webm',
       mp3: 'audio/mpeg',
@@ -430,30 +406,29 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
     }
     const mimeType = mimeMap[ext] || 'audio/webm'
 
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
-
     const result = await callWithRetry(() =>
-      model.generateContent([
-        {
-          inlineData: {
-            mimeType,
-            data: audioBase64,
+      ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType, data: audioBase64 } },
+              {
+                text: 'Transcreva o áudio a seguir com precisão, mantendo o texto exatamente como foi falado, sem adicionar pontuação desnecessária ou interpretar o conteúdo. Responda apenas com a transcrição, sem explicações.',
+              },
+            ],
           },
-        },
-        {
-          text: 'Transcreva o áudio a seguir com precisão, mantendo o texto exatamente como foi falado, sem adicionar pontuação desnecessária ou interpretar o conteúdo. Responda apenas com a transcrição, sem explicações.',
-        },
-      ])
+        ],
+      })
     )
 
-    // Cleanup temp file
     try { fs.unlinkSync(newPath) } catch {}
 
-    const text = result.response.text().trim()
+    const text = result.text.trim()
     return res.json({ text })
   } catch (err) {
     console.error('Erro na transcrição:', err.message)
-    // Cleanup on error
     if (req.file?.path) {
       try { fs.unlinkSync(req.file.path) } catch {}
       try { fs.unlinkSync(req.file.path + '.' + (req.file.originalname?.split('.').pop() || 'webm')) } catch {}
@@ -501,15 +476,12 @@ app.post('/api/upload', authenticate, upload.array('files', 5), async (req, res)
       }
 
       results.push({ name, ext, content, size: file.size, isImage })
-
-      // Cleanup
       try { fs.unlinkSync(file.path) } catch {}
     }
 
     return res.json({ files: results })
   } catch (err) {
     console.error('Erro no upload:', err.message)
-    // Cleanup on error
     if (req.files) {
       for (const f of req.files) {
         try { fs.unlinkSync(f.path) } catch {}
@@ -524,13 +496,14 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), model: GEMINI_MODEL })
 })
 
-/* ── Debug: testa a conexão com o Gemini (público — remova em produção após diagnóstico) ── */
+/* ── Debug: testa a conexão com o Gemini ── */
 app.get('/api/debug', async (req, res) => {
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
-    const result = await model.generateContent('Responda apenas: ok')
-    const text = result.response.text()
-    return res.json({ status: 'ok', model: GEMINI_MODEL, response: text })
+    const result = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: 'user', parts: [{ text: 'Responda apenas: ok' }] }],
+    })
+    return res.json({ status: 'ok', model: GEMINI_MODEL, response: result.text })
   } catch (err) {
     return res.status(500).json({
       status: 'error',
@@ -557,7 +530,7 @@ if (fs.existsSync(distPath)) {
 /* ── Start ── */
 app.listen(PORT, () => {
   console.log(`\n🚀 Amplie IA Backend rodando em http://localhost:${PORT}`)
-  console.log(`🤖 Modelo Gemini: ${GEMINI_MODEL}`)
+  console.log(`🤖 SDK: @google/genai | Modelo: ${GEMINI_MODEL}`)
   console.log(`📦 Supabase conectado: ${process.env.SUPABASE_URL}`)
   console.log(`🔐 Autenticação JWT ativada em todas as rotas /api\n`)
 })
