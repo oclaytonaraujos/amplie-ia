@@ -22,7 +22,7 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
@@ -375,15 +375,24 @@ app.post('/api/chat', authenticate, async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('Erro na API Gemini:', err.message)
+    // Log completo do erro para diagnóstico nos logs do servidor
+    console.error('=== ERRO na API Gemini ===')
+    console.error('Mensagem:', err.message)
+    console.error('Status HTTP:', err.status)
+    console.error('Código:', err.code)
+    console.error('Stack:', err.stack)
+    if (err.errorDetails) console.error('Detalhes:', JSON.stringify(err.errorDetails))
 
-    if (err.status === 401 || err.message?.includes('API key')) {
+    if (err.status === 401 || err.message?.includes('API key') || err.message?.includes('INVALID_ARGUMENT')) {
       return res.status(401).json({ error: 'Chave da API inválida.' })
     }
     const is429 = err.status === 429 || err.message?.includes('quota') || err.message?.includes('Resource has been exhausted') || err.message?.includes('429')
     if (is429) {
       console.error('Gemini quota excedida após retries:', err.message)
       return res.status(429).json({ error: 'Limite de uso da IA atingido. Aguarde alguns segundos e tente novamente.' })
+    }
+    if (err.status === 404 || err.message?.includes('not found') || err.message?.includes('404')) {
+      return res.status(500).json({ error: `Modelo "${GEMINI_MODEL}" não encontrado. Verifique a variável GEMINI_MODEL.` })
     }
 
     return res.status(500).json({ error: 'Erro interno do servidor.' })
@@ -512,7 +521,26 @@ app.post('/api/upload', authenticate, upload.array('files', 5), async (req, res)
 
 /* ── Health check (público) ── */
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), model: GEMINI_MODEL })
+})
+
+/* ── Debug: testa a conexão com o Gemini (público — remova em produção após diagnóstico) ── */
+app.get('/api/debug', async (req, res) => {
+  try {
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+    const result = await model.generateContent('Responda apenas: ok')
+    const text = result.response.text()
+    return res.json({ status: 'ok', model: GEMINI_MODEL, response: text })
+  } catch (err) {
+    return res.status(500).json({
+      status: 'error',
+      model: GEMINI_MODEL,
+      message: err.message,
+      httpStatus: err.status,
+      code: err.code,
+      details: err.errorDetails,
+    })
+  }
 })
 
 /* ── Static Files (Frontend) ── */
