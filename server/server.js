@@ -22,7 +22,7 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-05-20'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
@@ -513,6 +513,24 @@ app.get('/api/debug', async (req, res) => {
       code: err.code,
       details: err.errorDetails,
     })
+  }
+})
+
+/* ── Lista modelos disponíveis na conta ── */
+app.get('/api/models', async (req, res) => {
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${process.env.GEMINI_API_KEY}`
+    )
+    const data = await response.json()
+    const models = (data.models || []).map(m => ({
+      name: m.name,
+      displayName: m.displayName,
+      supportedMethods: m.supportedGenerationMethods,
+    }))
+    return res.json({ total: models.length, models })
+  } catch (err) {
+    return res.status(500).json({ error: err.message })
   }
 })
 
