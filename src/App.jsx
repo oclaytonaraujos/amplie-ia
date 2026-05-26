@@ -70,9 +70,9 @@ function MicrophoneIcon() {
   )
 }
 
-function StopCircleIcon() {
+function StopCircleIcon({ className = "w-5 h-5" }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={className}>
       <path fillRule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm5-2.25A.75.75 0 0 1 7.75 7h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-.75.75h-4.5a.75.75 0 0 1-.75-.75v-4.5Z" clipRule="evenodd" />
     </svg>
   )
@@ -903,21 +903,7 @@ export default function App() {
               </div>
             )}
 
-            {/* Recording Indicator */}
-            {isRecording && (
-              <div className="flex items-center gap-3 mb-2 px-3 py-2 bg-red-500/10 border border-red-500/20 rounded-2xl">
-                <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-sm text-red-400 font-medium">Gravando...</span>
-                <span className="text-sm text-red-400/70 font-mono">{formatTime(recordingTime)}</span>
-                <button
-                  onClick={stopRecording}
-                  className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-red-400 text-sm transition-colors"
-                >
-                  <StopCircleIcon />
-                  <span>Parar</span>
-                </button>
-              </div>
-            )}
+            {/* Recording Indicator removed and integrated below */}
 
             {/* Transcribing Indicator */}
             {isTranscribing && (
@@ -929,7 +915,7 @@ export default function App() {
               </div>
             )}
 
-            <div className="relative flex items-end bg-[#2A2A2A] rounded-3xl border border-white/5 focus-within:border-white/15 transition-all shadow-lg min-h-[60px]">
+            <div className={`relative flex items-end bg-[#2A2A2A] rounded-3xl border transition-all shadow-lg min-h-[60px] ${isRecording ? 'border-red-500/30 bg-red-500/[0.02]' : 'border-white/5 focus-within:border-white/15'}`}>
               {/* Paperclip button */}
               <input
                 ref={fileInputRef}
@@ -949,60 +935,69 @@ export default function App() {
                 <PaperclipIcon />
               </button>
 
+              {isRecording ? (
+                <div className="flex-1 flex items-center py-4 px-2 pr-28">
+                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse mr-3 shrink-0" />
+                  <span className="text-red-400 font-medium text-[15px] mr-3 whitespace-nowrap">Gravando áudio...</span>
+                  <span className="text-red-400/70 font-mono text-[15px]">{formatTime(recordingTime)}</span>
+                </div>
+              ) : null}
+
               <textarea
                 id="chat-input"
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={isRecording ? 'Gravando áudio...' : 'Envie uma mensagem...'}
+                placeholder="Envie uma mensagem..."
                 rows={1}
                 disabled={isRecording}
-                className="flex-1 bg-transparent text-chat-text text-[15px] placeholder-gray-500 py-4 px-2 pr-24 outline-none max-h-[200px] overflow-y-auto leading-relaxed resize-none disabled:opacity-40"
+                className={`flex-1 bg-transparent text-chat-text text-[15px] placeholder-gray-500 py-4 px-2 pr-24 outline-none max-h-[200px] overflow-y-auto leading-relaxed resize-none disabled:opacity-40 ${isRecording ? 'hidden' : 'block'}`}
               />
 
               {/* Mic + Send buttons */}
               <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                {/* Microphone button */}
-                {!isRecording ? (
-                  <button
-                    onClick={startRecording}
-                    disabled={isLoading || isTranscribing}
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-gray-500 hover:text-pink-400 hover:bg-white/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                    aria-label="Gravar áudio"
-                    title="Gravar áudio"
-                  >
-                    <MicrophoneIcon />
-                  </button>
-                ) : (
+                {isRecording ? (
                   <button
                     onClick={stopRecording}
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-red-400 hover:bg-red-500/10 transition-all animate-pulse"
+                    className="flex items-center gap-1.5 h-9 px-3 mr-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-full transition-colors font-medium text-[13px]"
                     aria-label="Parar gravação"
                     title="Parar gravação"
                   >
-                    <StopCircleIcon />
+                    <StopCircleIcon className="w-4 h-4" />
+                    <span>Parar</span>
                   </button>
-                )}
+                ) : (
+                  <>
+                    <button
+                      onClick={startRecording}
+                      disabled={isLoading || isTranscribing}
+                      className="w-9 h-9 rounded-full flex items-center justify-center text-gray-500 hover:text-pink-400 hover:bg-white/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                      aria-label="Gravar áudio"
+                      title="Gravar áudio"
+                    >
+                      <MicrophoneIcon />
+                    </button>
 
-                {/* Send button */}
-                <button
-                  id="send-button"
-                  onClick={handleSendMessage}
-                  disabled={!canSend}
-                  aria-label="Enviar mensagem"
-                  className={`
-                    w-9 h-9 rounded-full
-                    flex items-center justify-center
-                    transition-all duration-200
-                    ${canSend
-                      ? 'bg-white text-gray-900 hover:bg-gray-200 cursor-pointer scale-100'
-                      : 'bg-gray-600 text-gray-400 cursor-not-allowed scale-90 opacity-40'
-                    }
-                  `}
-                >
-                  <SendIcon />
-                </button>
+                    <button
+                      id="send-button"
+                      onClick={handleSendMessage}
+                      disabled={!canSend}
+                      aria-label="Enviar mensagem"
+                      className={`
+                        w-9 h-9 rounded-full
+                        flex items-center justify-center
+                        transition-all duration-200
+                        ${canSend
+                          ? 'bg-white text-gray-900 hover:bg-gray-200 cursor-pointer scale-100'
+                          : 'bg-gray-600 text-gray-400 cursor-not-allowed scale-90 opacity-40'
+                        }
+                      `}
+                    >
+                      <SendIcon />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
             <p className="text-center text-[11px] text-gray-500 opacity-60 mt-3 select-none tracking-wide">
