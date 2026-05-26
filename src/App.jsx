@@ -218,6 +218,46 @@ function SpeakButton({ text }) {
   )
 }
 
+/* ─────────────────── Copy Response Button ─────────────────── */
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <button
+      onClick={handleCopy}
+      title={copied ? 'Copiado!' : 'Copiar resposta'}
+      aria-label={copied ? 'Copiado!' : 'Copiar resposta'}
+      className={`
+        mt-1.5 flex items-center justify-center p-1 rounded-md transition-all duration-200 bg-transparent border-0 outline-none
+        ${copied
+          ? 'text-green-400 scale-110'
+          : 'text-gray-500 hover:text-gray-300 hover:scale-105'
+        }
+      `}
+      style={{ minWidth: '24px', minHeight: '24px' }}
+    >
+      {copied ? (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+          <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 0 1 .143 1.052l-8 10.5a.75.75 0 0 1-1.127.075l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 0 1 1.05-.143Z" clipRule="evenodd" />
+        </svg>
+      ) : (
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+          <path d="M7 2a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H7ZM6 4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4Z" />
+          <path d="M3.5 6A1.5 1.5 0 0 0 2 7.5v9A2.5 2.5 0 0 0 4.5 19h7a1.5 1.5 0 0 0 1.5-1.5.75.75 0 0 0-1.5 0 1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-9A1 1 0 0 1 3.5 7.5.75.75 0 0 0 3.5 6Z" />
+        </svg>
+      )}
+    </button>
+  )
+}
+
+
 function MessageBubble({ role, content }) {
   if (role === 'user') {
     // Parse normal files
@@ -296,7 +336,10 @@ function MessageBubble({ role, content }) {
         >
           {content}
         </ReactMarkdown>
-        <SpeakButton text={content} />
+        <div className="flex items-center gap-1 mt-1">
+          <SpeakButton text={content} />
+          <CopyButton text={content} />
+        </div>
       </div>
     </div>
   )
