@@ -25,10 +25,32 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
 
-const supabase = createClient(
+/**
+ * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
+ * A verificação de token NÃO requer service_role
+ */
+const supabaseAuth = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 )
+
+/**
+ * Cria um cliente Supabase autenticado com o JWT do usuário.
+ * Isso permite que o RLS funcione corretamente (auth.uid() retorna o user correto).
+ */
+function createUserClient(accessToken) {
+  return createClient(
+    process.env.SUPABASE_URL,
+    process.env.SUPABASE_ANON_KEY,
+    {
+      global: {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      },
+    }
+  )
+}
 
 app.use(cors())
 app.use(express.json({ limit: '50mb' }))
@@ -52,16 +74,51 @@ const SYSTEM_MESSAGE = {
     'Use formatação quando apropriado para melhorar a legibilidade.',
 }
 
-/* ═══════════════════════════════════════════════
-   CONVERSATIONS ENDPOINTS
-   ═══════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════
+   MIDDLEWARE DE AUTENTICAÇÃO
+   Verifica o JWT do usuário em cada requisição protegida.
+   Injeta req.userId e req.accessToken para uso nas rotas.
+   ══════════════════════════════════════════════════ */
 
-/* ── List conversations ── */
-app.get('/api/conversations', async (req, res) => {
+async function authenticate(req, res, next) {
+  const authHeader = req.headers.authorization
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Autenticação necessária. Faça login para continuar.' })
+  }
+
+  const token = authHeader.replace('Bearer ', '').trim()
+
   try {
+    // Verificar e decodificar o JWT via Supabase
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
+
+    if (error || !user) {
+      return res.status(401).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' })
+    }
+
+    // Injetar dados do usuário na requisição
+    req.userId = user.id
+    req.accessToken = token
+    next()
+  } catch (err) {
+    console.error('Erro na verificação do token:', err.message)
+    return res.status(401).json({ error: 'Erro ao verificar autenticação.' })
+  }
+}
+
+/* ══════════════════════════════════════════════════
+   CONVERSATIONS ENDPOINTS
+   ══════════════════════════════════════════════════ */
+
+/* ── List conversations (apenas do usuário logado) ── */
+app.get('/api/conversations', authenticate, async (req, res) => {
+  try {
+    const supabase = createUserClient(req.accessToken)
+
     const { data, error } = await supabase
       .from('conversations')
-      .select('*')
+      .select('id, title, created_at, updated_at')
+      .eq('user_id', req.userId) // double-check além do RLS
       .order('updated_at', { ascending: false })
 
     if (error) throw error
@@ -73,12 +130,17 @@ app.get('/api/conversations', async (req, res) => {
 })
 
 /* ── Create conversation ── */
-app.post('/api/conversations', async (req, res) => {
+app.post('/api/conversations', authenticate, async (req, res) => {
   try {
+    const supabase = createUserClient(req.accessToken)
     const { title } = req.body
+
     const { data, error } = await supabase
       .from('conversations')
-      .insert({ title: title || 'Nova conversa' })
+      .insert({
+        title: title || 'Nova conversa',
+        user_id: req.userId, // sempre o usuário logado
+      })
       .select()
       .single()
 
@@ -90,14 +152,17 @@ app.post('/api/conversations', async (req, res) => {
   }
 })
 
-/* ── Delete conversation ── */
-app.delete('/api/conversations/:id', async (req, res) => {
+/* ── Delete conversation (apenas a própria) ── */
+app.delete('/api/conversations/:id', authenticate, async (req, res) => {
   try {
+    const supabase = createUserClient(req.accessToken)
     const { id } = req.params
+
     const { error } = await supabase
       .from('conversations')
       .delete()
       .eq('id', id)
+      .eq('user_id', req.userId) // garante que só deleta a própria
 
     if (error) throw error
     return res.json({ success: true })
@@ -107,14 +172,29 @@ app.delete('/api/conversations/:id', async (req, res) => {
   }
 })
 
-/* ── Get messages of a conversation ── */
-app.get('/api/conversations/:id/messages', async (req, res) => {
+/* ── Get messages of a conversation (apenas do usuário logado) ── */
+app.get('/api/conversations/:id/messages', authenticate, async (req, res) => {
   try {
+    const supabase = createUserClient(req.accessToken)
     const { id } = req.params
+
+    // Primeiro: verificar que a conversa pertence ao usuário
+    const { data: conv, error: convError } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('id', id)
+      .eq('user_id', req.userId)
+      .single()
+
+    if (convError || !conv) {
+      return res.status(403).json({ error: 'Conversa não encontrada ou sem permissão.' })
+    }
+
     const { data, error } = await supabase
       .from('messages')
-      .select('*')
+      .select('id, role, content, created_at')
       .eq('conversation_id', id)
+      .eq('user_id', req.userId) // double-check
       .order('created_at', { ascending: true })
 
     if (error) throw error
@@ -125,12 +205,13 @@ app.get('/api/conversations/:id/messages', async (req, res) => {
   }
 })
 
-/* ═══════════════════════════════════════════════
+/* ══════════════════════════════════════════════════
    CHAT ENDPOINT (with persistence)
-   ═══════════════════════════════════════════════ */
+   ══════════════════════════════════════════════════ */
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', authenticate, async (req, res) => {
   try {
+    const supabase = createUserClient(req.accessToken)
     const { messages, conversationId } = req.body
 
     if (!messages || !Array.isArray(messages)) {
@@ -140,10 +221,23 @@ app.post('/api/chat', async (req, res) => {
     // Get the last user message
     const lastUserMessage = messages[messages.length - 1]
 
-    // If we have a conversationId, save the user message to DB
+    // Se temos conversationId, verificar que pertence ao usuário antes de inserir
     if (conversationId) {
+      const { data: conv, error: convError } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('id', conversationId)
+        .eq('user_id', req.userId)
+        .single()
+
+      if (convError || !conv) {
+        return res.status(403).json({ error: 'Conversa não encontrada ou sem permissão.' })
+      }
+
+      // Salvar mensagem do usuário
       await supabase.from('messages').insert({
         conversation_id: conversationId,
+        user_id: req.userId,
         role: lastUserMessage.role,
         content: lastUserMessage.content,
       })
@@ -181,32 +275,41 @@ app.post('/api/chat', async (req, res) => {
 
     const assistantMessage = completion.choices[0].message
 
-    // Save assistant response to DB
+    // Salvar resposta do assistente e atualizar título/updated_at
     if (conversationId) {
       await supabase.from('messages').insert({
         conversation_id: conversationId,
+        user_id: req.userId,
         role: assistantMessage.role,
         content: assistantMessage.content,
       })
 
-      // Update conversation title if it's the first message (title is still default)
+      // Atualizar título automaticamente se ainda é o padrão
       const { data: conv } = await supabase
         .from('conversations')
         .select('title')
         .eq('id', conversationId)
+        .eq('user_id', req.userId)
         .single()
 
       if (conv && conv.title === 'Nova conversa') {
-        const autoTitle = lastUserMessage.content.substring(0, 60) + (lastUserMessage.content.length > 60 ? '...' : '')
+        const rawText = lastUserMessage.content
+          .replace(/\[IMAGE_ATTACHMENT:.*?\][\s\S]*?\[\/IMAGE_ATTACHMENT\]/g, '')
+          .replace(/\[FILE_ATTACHMENT:.*?\][\s\S]*?\[\/FILE_ATTACHMENT\]/g, '')
+          .trim()
+        const autoTitle = rawText.substring(0, 60) + (rawText.length > 60 ? '...' : '')
         await supabase
           .from('conversations')
-          .update({ title: autoTitle, updated_at: new Date().toISOString() })
+          .update({ title: autoTitle || 'Nova conversa' })
           .eq('id', conversationId)
+          .eq('user_id', req.userId)
       } else {
+        // Trigger updated_at via update fictício (o trigger de banco cuida do timestamp)
         await supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', conversationId)
+          .eq('user_id', req.userId)
       }
     }
 
@@ -230,11 +333,11 @@ app.post('/api/chat', async (req, res) => {
   }
 })
 
-/* ═══════════════════════════════════════════════
+/* ══════════════════════════════════════════════════
    AUDIO TRANSCRIPTION (Whisper)
-   ═══════════════════════════════════════════════ */
+   ══════════════════════════════════════════════════ */
 
-app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
+app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Nenhum arquivo de áudio enviado.' })
@@ -266,9 +369,9 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
   }
 })
 
-/* ═══════════════════════════════════════════════
+/* ══════════════════════════════════════════════════
    FILE UPLOAD (extract text content)
-   ═══════════════════════════════════════════════ */
+   ══════════════════════════════════════════════════ */
 
 const TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'json', 'csv', 'js', 'jsx', 'ts', 'tsx',
@@ -279,7 +382,7 @@ const TEXT_EXTENSIONS = new Set([
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 
-app.post('/api/upload', upload.array('files', 5), async (req, res) => {
+app.post('/api/upload', authenticate, upload.array('files', 5), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'Nenhum arquivo enviado.' })
@@ -323,17 +426,15 @@ app.post('/api/upload', upload.array('files', 5), async (req, res) => {
   }
 })
 
-/* ── Health check ── */
+/* ── Health check (público) ── */
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
 /* ── Static Files (Frontend) ── */
-// Em produção (Docker), servimos a pasta 'dist' que contém o build do React/Vite
 const distPath = path.resolve('dist')
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath))
-  // Qualquer rota que não comece com /api retorna o index.html do frontend (para suportar o React Router)
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api')) {
       res.sendFile(path.join(distPath, 'index.html'))
@@ -344,5 +445,6 @@ if (fs.existsSync(distPath)) {
 /* ── Start ── */
 app.listen(PORT, () => {
   console.log(`\n🚀 Amplie IA Backend rodando em http://localhost:${PORT}`)
-  console.log(`📦 Supabase conectado: ${process.env.SUPABASE_URL}\n`)
+  console.log(`📦 Supabase conectado: ${process.env.SUPABASE_URL}`)
+  console.log(`🔐 Autenticação JWT ativada em todas as rotas /api\n`)
 })

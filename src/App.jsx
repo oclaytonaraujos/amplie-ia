@@ -2,6 +2,13 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { MdOutlineEditNote } from "react-icons/md";
 import { FiSidebar } from "react-icons/fi";
 import { LuMessageCircle } from "react-icons/lu";
+import { useAuth } from './context/AuthContext.jsx'
+import LoginScreen from './components/LoginScreen.jsx'
+import UpgradePlanModal from './components/UpgradePlanModal.jsx'
+import PersonalizationModal, { loadAccentColor } from './components/PersonalizationModal.jsx'
+import ProfileEditModal from './components/ProfileEditModal.jsx'
+import SettingsModal from './components/SettingsModal.jsx'
+import HelpModal from './components/HelpModal.jsx'
 
 /* ─────────────────────────── SVG Icons ─────────────────────────── */
 
@@ -336,7 +343,25 @@ function SidebarItem({ icon, text, onClick, collapsed, active, dangerAction }) {
 
 /* ────────────────────────── Sidebar ────────────────────────────── */
 
-function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch }) {
+function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch, onSignOut, onOpenModal, user }) {
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const profileMenuRef = useRef(null)
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) {
+        setProfileMenuOpen(false)
+      }
+    }
+    if (profileMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [profileMenuOpen])
+
+  const displayName = user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Usuário'
+  const initial = user?.email ? user.email[0].toUpperCase() : '?'
+
   return (
     <>
       {/* Overlay for mobile */}
@@ -453,24 +478,116 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
           )}
         </div>
 
-        {/* Sidebar Footer */}
-        <div className="h-[48px] shrink-0 border-t border-white/5 flex items-center justify-center overflow-hidden mt-auto relative">
-          <span 
-            className={`
-              absolute text-[10px] font-medium text-gray-500 transition-opacity ease-in-out
-              ${collapsed ? 'opacity-0 pointer-events-none duration-200 delay-0' : 'opacity-0 pointer-events-none duration-200 delay-0'}
-            `}
-          >
-            v1.0
-          </span>
-          <span 
-            className={`
-              absolute text-xs font-medium text-gray-500 transition-opacity ease-in-out
-              ${collapsed ? 'opacity-0 pointer-events-none duration-200 delay-0' : 'opacity-100 duration-300 delay-100'}
-            `}
-          >
-            Amplie IA v1.0
-          </span>
+        {/* Sidebar Footer — Profile Button + Dropdown */}
+        <div className="shrink-0 border-t border-white/5 mt-auto overflow-hidden" ref={profileMenuRef}>
+
+          {/* Dropdown menu — opens upward */}
+          {profileMenuOpen && (
+            <div className="mx-2 mb-1 bg-[#202020] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
+              {/* User header inside dropdown */}
+              <div className="flex items-center gap-3 px-3 py-3 border-b border-white/8">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white text-sm font-bold shrink-0">
+                  {initial}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-white truncate">{displayName}</p>
+                  <p className="text-xs text-gray-500 truncate">{user?.email || ''}</p>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-500 shrink-0">
+                  <path fillRule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                </svg>
+              </div>
+
+              {/* Menu items */}
+              <div className="py-1">
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('upgrade') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path fillRule="evenodd" d="M10.868 2.884c-.321-.772-1.415-.772-1.736 0l-1.83 4.401-4.753.381c-.833.067-1.171 1.107-.536 1.651l3.62 3.102-1.106 4.637c-.194.813.691 1.456 1.405 1.02L10 15.591l4.069 2.485c.713.436 1.598-.207 1.404-1.02l-1.106-4.637 3.62-3.102c.635-.544.297-1.584-.536-1.65l-4.752-.382-1.831-4.401Z" clipRule="evenodd" />
+                  </svg>
+                  <span>Subir de plano</span>
+                </button>
+
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('personalization') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path fillRule="evenodd" d="M3 4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4Zm0 6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2Zm0 6a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-2Z" clipRule="evenodd" />
+                  </svg>
+                  <span>Personalização</span>
+                </button>
+
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('profile') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path d="M10 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.465 14.493a1.23 1.23 0 0 0 .41 1.412A9.957 9.957 0 0 0 10 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 0 0-13.074.003Z" />
+                  </svg>
+                  <span>Perfil</span>
+                </button>
+
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('settings') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path fillRule="evenodd" d="M7.84 1.804A1 1 0 0 1 8.82 1h2.36a1 1 0 0 1 .98.804l.331 1.652a6.993 6.993 0 0 1 1.929 1.115l1.598-.54a1 1 0 0 1 1.186.447l1.18 2.044a1 1 0 0 1-.205 1.251l-1.267 1.113a7.047 7.047 0 0 1 0 2.228l1.267 1.113a1 1 0 0 1 .206 1.25l-1.18 2.045a1 1 0 0 1-1.187.447l-1.598-.54a6.993 6.993 0 0 1-1.929 1.115l-.33 1.652a1 1 0 0 1-.98.804H8.82a1 1 0 0 1-.98-.804l-.331-1.652a6.993 6.993 0 0 1-1.929-1.115l-1.598.54a1 1 0 0 1-1.186-.447l-1.18-2.044a1 1 0 0 1 .205-1.251l1.267-1.114a7.05 7.05 0 0 1 0-2.227L1.821 7.773a1 1 0 0 1-.206-1.25l1.18-2.045a1 1 0 0 1 1.187-.447l1.598.54A6.992 6.992 0 0 1 7.51 3.456l.33-1.652ZM10 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" clipRule="evenodd" />
+                  </svg>
+                  <span>Configurações</span>
+                </button>
+              </div>
+
+              <div className="border-t border-white/8 py-1">
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('help') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+                  </svg>
+                  <span>Ajuda</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-600 ml-auto">
+                    <path fillRule="evenodd" d="M8.22 5.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L11.94 10 8.22 6.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                  </svg>
+                </button>
+
+                <button
+                  onClick={() => { setProfileMenuOpen(false); onSignOut(); }}
+                  className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                    <path fillRule="evenodd" d="M3 4.25A2.25 2.25 0 0 1 5.25 2h5.5A2.25 2.25 0 0 1 13 4.25v2a.75.75 0 0 1-1.5 0v-2a.75.75 0 0 0-.75-.75h-5.5a.75.75 0 0 0-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 0 0 .75-.75v-2a.75.75 0 0 1 1.5 0v2A2.25 2.25 0 0 1 10.75 18h-5.5A2.25 2.25 0 0 1 3 15.75V4.25Z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M19 10a.75.75 0 0 0-.75-.75H8.704l1.048-.943a.75.75 0 1 0-1.004-1.114l-2.5 2.25a.75.75 0 0 0 0 1.114l2.5 2.25a.75.75 0 1 0 1.004-1.114l-1.048-.943h9.546A.75.75 0 0 0 19 10Z" clipRule="evenodd" />
+                  </svg>
+                  <span>Sair</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Profile trigger button */}
+          <div className="px-[14px] py-2">
+            <button
+              onClick={() => setProfileMenuOpen((prev) => !prev)}
+              className={`
+                w-full flex items-center rounded-lg h-11
+                transition-colors duration-200
+                text-gray-300 hover:bg-white/5 hover:text-white
+                ${profileMenuOpen ? 'bg-white/5' : ''}
+              `}
+              aria-label="Perfil do usuário"
+              title="Perfil do usuário"
+            >
+              <div className="w-11 h-11 flex items-center justify-center shrink-0">
+                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                  {initial}
+                </div>
+              </div>
+              <div
+                className={`
+                  flex items-center gap-2 whitespace-nowrap overflow-hidden transition-all ease-in-out flex-1 min-w-0
+                  ${collapsed ? 'w-0 opacity-0 ml-0 duration-200 delay-0' : 'w-full opacity-100 duration-300 delay-100 ml-2'}
+                `}
+              >
+                <div className="flex flex-col items-start min-w-0 flex-1">
+                  <span className="text-sm font-medium truncate max-w-[140px] leading-tight">{displayName}</span>
+                  <span className="text-xs text-gray-500">Plus</span>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-500 shrink-0 mr-1">
+                  <path d="M2 4.5A2.5 2.5 0 0 1 4.5 2h11A2.5 2.5 0 0 1 18 4.5v.5H2v-.5ZM2 7h16v8.5A2.5 2.5 0 0 1 15.5 18h-11A2.5 2.5 0 0 1 2 15.5V7Zm6.5 4a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3Z" />
+                </svg>
+              </div>
+            </button>
+          </div>
         </div>
       </aside>
     </>
@@ -480,6 +597,8 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
 /* ─────────────────────────── Main App ──────────────────────────── */
 
 export default function App() {
+  const { session, user, loading: authLoading, signOut } = useAuth()
+
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
@@ -493,6 +612,10 @@ export default function App() {
   const [isTranscribing, setIsTranscribing] = useState(false)
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [activeModal, setActiveModal] = useState(null) // 'upgrade'|'personalization'|'profile'|'settings'|'help'
+
+  // Apply saved accent color on mount
+  useEffect(() => { loadAccentColor() }, [])
 
   const messagesEndRef = useRef(null)
   const textareaRef = useRef(null)
@@ -501,10 +624,27 @@ export default function App() {
   const audioChunksRef = useRef([])
   const recordingTimerRef = useRef(null)
 
-  /* ── Load conversations on mount ── */
+  /* ── Helper: Authorization header para o backend ── */
+  function authHeaders() {
+    const token = session?.access_token
+    return token
+      ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      : { 'Content-Type': 'application/json' }
+  }
+
+  /* ── Load conversations quando a sessão estiver disponível ── */
   useEffect(() => {
-    fetchConversations()
-  }, [])
+    if (session) {
+      fetchConversations()
+    } else {
+      // Limpar estado ao deslogar
+      setConversations([])
+      setMessages([])
+      setActiveConversationId(null)
+      setInput('')
+      setAttachedFiles([])
+    }
+  }, [session])
 
   /* Auto-scroll on new messages */
   useEffect(() => {
@@ -520,10 +660,37 @@ export default function App() {
     }
   }, [input])
 
+  /* ── Logout: limpa todo estado do usuário anterior ── */
+  async function handleSignOut() {
+    // Parar gravação se estiver ativa
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop()
+    }
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+
+    // Limpar todo estado local sensível
+    setMessages([])
+    setConversations([])
+    setActiveConversationId(null)
+    setInput('')
+    setAttachedFiles([])
+    setIsRecording(false)
+    setRecordingTime(0)
+    setIsTranscribing(false)
+    setIsSearchModalOpen(false)
+    setSearchQuery('')
+
+    await signOut()
+  }
+
   /* ── API Helpers ── */
   async function fetchConversations() {
     try {
-      const res = await fetch('/api/conversations')
+      const res = await fetch('/api/conversations', { headers: authHeaders() })
+      if (!res.ok) return
       const data = await res.json()
       setConversations(data.conversations || [])
     } catch (err) {
@@ -533,20 +700,24 @@ export default function App() {
 
   const loadMessages = useCallback(async (conversationId) => {
     try {
-      const res = await fetch(`/api/conversations/${conversationId}/messages`)
+      const res = await fetch(`/api/conversations/${conversationId}/messages`, { headers: authHeaders() })
+      if (res.status === 403) {
+        console.warn('Tentativa de acesso a conversa de outro usuário bloqueada.')
+        return
+      }
       const data = await res.json()
       setMessages((data.messages || []).map((m) => ({ role: m.role, content: m.content })))
       setActiveConversationId(conversationId)
     } catch (err) {
       console.error('Erro ao carregar mensagens:', err)
     }
-  }, [])
+  }, [session])
 
   async function createConversation() {
     try {
       const res = await fetch('/api/conversations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ title: 'Nova conversa' }),
       })
       const data = await res.json()
@@ -560,7 +731,10 @@ export default function App() {
 
   async function deleteConversation(id) {
     try {
-      await fetch(`/api/conversations/${id}`, { method: 'DELETE' })
+      await fetch(`/api/conversations/${id}`, {
+        method: 'DELETE',
+        headers: authHeaders(),
+      })
       if (activeConversationId === id) {
         setActiveConversationId(null)
         setMessages([])
@@ -594,7 +768,12 @@ export default function App() {
     files.forEach((f) => formData.append('files', f))
 
     try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData })
+      const token = session?.access_token
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      })
       const data = await res.json()
       if (data.files) {
         setAttachedFiles((prev) => [...prev, ...data.files])
@@ -658,7 +837,12 @@ export default function App() {
       const formData = new FormData()
       formData.append('audio', blob, 'recording.webm')
 
-      const res = await fetch('/api/transcribe', { method: 'POST', body: formData })
+      const token = session?.access_token
+      const res = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: formData,
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+      })
       const data = await res.json()
 
       if (data.text) {
@@ -722,7 +906,7 @@ export default function App() {
 
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
       })
 
@@ -770,7 +954,25 @@ export default function App() {
 
   const canSend = (input.trim().length > 0 || attachedFiles.length > 0) && !isLoading && !isRecording
 
-  /* ── Render ── */
+  /* ── Auth Guards ── */
+  if (authLoading) {
+    return (
+      <div className="flex h-screen bg-chat-bg items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center p-2">
+            <img src="/logo.png" alt="Amplie IA" className="w-full h-full object-contain" />
+          </div>
+          <div className="w-8 h-8 border-2 border-white/20 border-t-pink-500 rounded-full animate-spin" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!session) {
+    return <LoginScreen />
+  }
+
+  /* ── Render (usuário autenticado) ── */
   return (
     <div className="flex h-screen bg-chat-bg overflow-hidden">
       {/* Search Modal */}
@@ -820,6 +1022,41 @@ export default function App() {
         </div>
       )}
 
+      {/* ── Profile-menu modals ── */}
+      {activeModal === 'upgrade' && (
+        <UpgradePlanModal onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal === 'personalization' && (
+        <PersonalizationModal onClose={() => setActiveModal(null)} />
+      )}
+      {activeModal === 'profile' && (
+        <ProfileEditModal
+          user={user}
+          onClose={() => setActiveModal(null)}
+          onProfileUpdated={() => { /* Supabase refreshes session automatically */ }}
+        />
+      )}
+      {activeModal === 'settings' && (
+        <SettingsModal
+          onClose={() => setActiveModal(null)}
+          onClearConversations={async () => {
+            try {
+              await Promise.all(conversations.map(c =>
+                fetch(`/api/conversations/${c.id}`, { method: 'DELETE', headers: authHeaders() })
+              ))
+              setConversations([])
+              setMessages([])
+              setActiveConversationId(null)
+            } catch (err) {
+              console.error('Erro ao limpar conversas:', err)
+            }
+          }}
+        />
+      )}
+      {activeModal === 'help' && (
+        <HelpModal onClose={() => setActiveModal(null)} />
+      )}
+
       {/* Sidebar */}
       <Sidebar
         conversations={conversations}
@@ -832,6 +1069,9 @@ export default function App() {
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed((prev) => !prev)}
         onOpenSearch={() => setIsSearchModalOpen(true)}
+        onSignOut={handleSignOut}
+        onOpenModal={(modal) => setActiveModal(modal)}
+        user={user}
       />
 
       {/* Main Chat Area */}
