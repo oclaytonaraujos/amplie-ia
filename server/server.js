@@ -70,6 +70,24 @@ const SYSTEM_INSTRUCTION =
   'Responda sempre em português brasileiro, de forma clara e objetiva. ' +
   'Use formatação quando apropriado para melhorar a legibilidade.'
 
+/* ── Retry helper com backoff exponencial ── */
+async function callWithRetry(fn, maxRetries = 3) {
+  let lastError
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      lastError = err
+      const is429 = err.status === 429 || err.message?.includes('429') || err.message?.includes('quota') || err.message?.includes('Resource has been exhausted')
+      if (!is429 || attempt === maxRetries - 1) throw err
+      const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500
+      console.warn(`⚠️ Gemini 429 — tentativa ${attempt + 1}/${maxRetries}. Aguardando ${Math.round(delay)}ms...`)
+      await new Promise((r) => setTimeout(r, delay))
+    }
+  }
+  throw lastError
+}
+
 /* ══════════════════════════════════════════════════
    MIDDLEWARE DE AUTENTICAÇÃO
    Verifica o JWT do usuário em cada requisição protegida.
@@ -308,8 +326,8 @@ app.post('/api/chat', authenticate, async (req, res) => {
       },
     })
 
-    // Enviar a mensagem atual
-    const result = await chat.sendMessage(lastMsgParts)
+    // Enviar a mensagem atual (com retry automático em caso de 429)
+    const result = await callWithRetry(() => chat.sendMessage(lastMsgParts))
     const responseText = result.response.text()
 
     // Salvar resposta do assistente e atualizar título/updated_at
@@ -362,8 +380,10 @@ app.post('/api/chat', authenticate, async (req, res) => {
     if (err.status === 401 || err.message?.includes('API key')) {
       return res.status(401).json({ error: 'Chave da API inválida.' })
     }
-    if (err.status === 429 || err.message?.includes('quota')) {
-      return res.status(429).json({ error: 'Limite de requisições excedido. Tente novamente em breve.' })
+    const is429 = err.status === 429 || err.message?.includes('quota') || err.message?.includes('Resource has been exhausted') || err.message?.includes('429')
+    if (is429) {
+      console.error('Gemini quota excedida após retries:', err.message)
+      return res.status(429).json({ error: 'Limite de uso da IA atingido. Aguarde alguns segundos e tente novamente.' })
     }
 
     return res.status(500).json({ error: 'Erro interno do servidor.' })
@@ -403,17 +423,19 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
 
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL })
 
-    const result = await model.generateContent([
-      {
-        inlineData: {
-          mimeType,
-          data: audioBase64,
+    const result = await callWithRetry(() =>
+      model.generateContent([
+        {
+          inlineData: {
+            mimeType,
+            data: audioBase64,
+          },
         },
-      },
-      {
-        text: 'Transcreva o áudio a seguir com precisão, mantendo o texto exatamente como foi falado, sem adicionar pontuação desnecessária ou interpretar o conteúdo. Responda apenas com a transcrição, sem explicações.',
-      },
-    ])
+        {
+          text: 'Transcreva o áudio a seguir com precisão, mantendo o texto exatamente como foi falado, sem adicionar pontuação desnecessária ou interpretar o conteúdo. Responda apenas com a transcrição, sem explicações.',
+        },
+      ])
+    )
 
     // Cleanup temp file
     try { fs.unlinkSync(newPath) } catch {}
