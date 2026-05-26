@@ -10,6 +10,8 @@ import PersonalizationModal, { loadAccentColor } from './components/Personalizat
 import ProfileEditModal from './components/ProfileEditModal.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import HelpModal from './components/HelpModal.jsx'
+import { jsPDF } from 'jspdf'
+import html2canvas from 'html2canvas'
 
 /* ─────────────────────────── SVG Icons ─────────────────────────── */
 
@@ -257,6 +259,287 @@ function CopyButton({ text }) {
   )
 }
 
+/* ─────────────────── Markdown to HTML Helper ───────────────── */
+
+function markdownToHtml(md) {
+  if (!md) return ''
+  
+  // Clear any file attachments
+  let html = md
+    .replace(/\[FILE_ATTACHMENT:[\s\S]*?\/FILE_ATTACHMENT\]/g, '')
+    .replace(/\[IMAGE_ATTACHMENT:[\s\S]*?\/IMAGE_ATTACHMENT\]/g, '')
+    .trim()
+
+  // Convert headings
+  html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>')
+  html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>')
+  html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>')
+
+  // Convert bold and italics
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>')
+
+  // Convert blockquotes
+  html = html.replace(/^>\s+(.*?)$/gm, '<blockquote style="border-left:3px solid #db2777; padding-left:10px; color:#4b5563; font-style:italic;">$1</blockquote>')
+
+  // Convert lists (simple parser)
+  html = html.replace(/^[-*+]\s+(.*?)$/gm, '<li>$1</li>')
+  
+  // Line-by-line paragraph and list wrapping
+  const lines = html.split('\n')
+  let inList = false
+  let finalLines = []
+  
+  for (let line of lines) {
+    if (line.startsWith('<li>')) {
+      if (!inList) {
+        finalLines.push('<ul style="margin-bottom: 10px; padding-left: 20px;">')
+        inList = true
+      }
+      finalLines.push(line)
+    } else {
+      if (inList) {
+        finalLines.push('</ul>')
+        inList = false
+      }
+      const trimmed = line.trim()
+      if (trimmed) {
+        if (!trimmed.startsWith('<h') && !trimmed.startsWith('<pre') && !trimmed.startsWith('<block') && !trimmed.startsWith('</') && !trimmed.startsWith('<ul') && !trimmed.startsWith('<li')) {
+          finalLines.push(`<p style="margin-bottom: 12px; line-height: 1.6; font-size:14px; text-align:justify;">${trimmed}</p>`)
+        } else {
+          finalLines.push(trimmed)
+        }
+      }
+    }
+  }
+  if (inList) {
+    finalLines.push('</ul>')
+  }
+
+  return finalLines.join('\n')
+}
+
+/* ─────────────────── PDF Export Button ────────────────────── */
+
+function PdfButton({ text }) {
+  const [exporting, setExporting] = useState(false)
+
+  async function handlePdfExport() {
+    if (exporting) return
+    setExporting(true)
+    
+    const htmlContent = markdownToHtml(text)
+    
+    // Create temporary styled A4 div
+    const tempDiv = document.createElement('div')
+    tempDiv.style.position = 'absolute'
+    tempDiv.style.left = '-9999px'
+    tempDiv.style.top = '-9999px'
+    tempDiv.style.width = '750px' // A4 proportion width
+    tempDiv.style.padding = '48px'
+    tempDiv.style.backgroundColor = '#ffffff'
+    tempDiv.style.color = '#1f2937'
+    tempDiv.style.fontFamily = 'Arial, sans-serif'
+    
+    tempDiv.innerHTML = `
+      <div style="border-bottom: 2px solid #db2777; padding-bottom: 12px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between;">
+        <div>
+          <h1 style="color: #db2777; margin: 0; font-size: 26px; font-weight: bold; letter-spacing: -0.5px;">AMPLIE - IA</h1>
+          <p style="margin: 2px 0 0 0; font-size: 11px; color: #6b7280;">Sua assistente inteligente pessoal</p>
+        </div>
+        <div style="text-align: right;">
+          <p style="margin: 0; font-size: 11px; color: #6b7280; font-weight: 500;">Data: ${new Date().toLocaleDateString('pt-BR')}</p>
+          <p style="margin: 2px 0 0 0; font-size: 9px; color: #9ca3af;">Exportado via Amplie Web</p>
+        </div>
+      </div>
+      <div style="font-size: 14px; line-height: 1.6; color: #374151;">
+        ${htmlContent}
+      </div>
+      <div style="margin-top: 40px; border-top: 1px solid #e5e7eb; padding-top: 12px; text-align: center; font-size: 10px; color: #9ca3af;">
+        © ${new Date().getFullYear()} Amplie IA. Todos os direitos reservados.
+      </div>
+    `
+    document.body.appendChild(tempDiv)
+
+    try {
+      const canvas = await html2canvas(tempDiv, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      })
+      
+      document.body.removeChild(tempDiv)
+      
+      const imgData = canvas.toDataURL('image/png')
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'px',
+        format: 'a4'
+      })
+      
+      const pdfWidth = pdf.internal.pageSize.getWidth()
+      const pdfHeight = pdf.internal.pageSize.getHeight()
+      const imgWidth = canvas.width
+      const imgHeight = canvas.height
+      
+      const ratio = pdfWidth / imgWidth
+      const finalImgHeight = imgHeight * ratio
+      
+      let heightLeft = finalImgHeight
+      let position = 0
+      
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, finalImgHeight, undefined, 'FAST')
+      heightLeft -= pdfHeight
+      
+      while (heightLeft >= 0) {
+        position = heightLeft - finalImgHeight
+        pdf.addPage()
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, finalImgHeight, undefined, 'FAST')
+        heightLeft -= pdfHeight
+      }
+      
+      pdf.save(`amplie-ia-documento-${Date.now()}.pdf`)
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error)
+      if (document.body.contains(tempDiv)) {
+        document.body.removeChild(tempDiv)
+      }
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handlePdfExport}
+      disabled={exporting}
+      title={exporting ? 'Exportando...' : 'Exportar para PDF'}
+      aria-label={exporting ? 'Exportando...' : 'Exportar para PDF'}
+      className={`
+        mt-1.5 flex items-center justify-center p-1 rounded-md transition-all duration-200 bg-transparent border-0 outline-none
+        ${exporting
+          ? 'text-pink-400 animate-pulse'
+          : 'text-gray-500 hover:text-red-400 hover:scale-105'
+        }
+      `}
+      style={{ minWidth: '24px', minHeight: '24px' }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.379 2H4.5Zm6 1.5v3a1 1 0 0 0 1 1h3l-4-4ZM5.25 10.75a.75.75 0 0 1 .75-.75h8a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h8a.75.75 0 0 1 0 1.5H6a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
+      </svg>
+    </button>
+  )
+}
+
+/* ─────────────────── Word Export Button ───────────────────── */
+
+function WordButton({ text }) {
+  const [exporting, setExporting] = useState(false)
+
+  function handleWordExport() {
+    setExporting(true)
+    try {
+      const htmlContent = markdownToHtml(text)
+      const header = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' 
+              xmlns:w='urn:schemas-microsoft-com:office:word' 
+              xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+          <title>Documento Amplie IA</title>
+          <!--[if gte mso 9]>
+          <xml>
+            <w:WordDocument>
+              <w:View>Print</w:View>
+              <w:Zoom>100</w:Zoom>
+              <w:DoNotOptimizeForBrowser/>
+            </w:WordDocument>
+          </xml>
+          <![endif]-->
+          <style>
+            body { 
+              font-family: 'Arial', sans-serif; 
+              font-size: 11pt; 
+              line-height: 1.5; 
+              color: #333333; 
+              margin: 1in; 
+            }
+            h1 { color: #db2777; font-size: 20pt; margin-top: 18pt; margin-bottom: 6pt; font-weight: bold; }
+            h2 { color: #db2777; font-size: 16pt; margin-top: 14pt; margin-bottom: 6pt; font-weight: bold; }
+            h3 { color: #111827; font-size: 13pt; margin-top: 12pt; margin-bottom: 4pt; font-weight: bold; }
+            p { margin-bottom: 8pt; text-align: justify; }
+            ul { margin-bottom: 8pt; padding-left: 20pt; }
+            li { margin-bottom: 4pt; }
+            blockquote { 
+              border-left: 3pt solid #db2777; 
+              padding-left: 10pt; 
+              color: #555555; 
+              font-style: italic; 
+              margin: 10pt 0; 
+            }
+            pre { 
+              background-color: #f3f4f6; 
+              padding: 8pt; 
+              font-family: 'Courier New', Courier, monospace; 
+              font-size: 9.5pt; 
+              border-radius: 4pt; 
+              margin: 8pt 0;
+            }
+            code { 
+              background-color: #f3f4f6; 
+              font-family: 'Courier New', Courier, monospace; 
+              font-size: 9.5pt; 
+              padding: 1pt 3pt;
+            }
+          </style>
+        </head>
+        <body>
+          <div style="text-align: center; margin-bottom: 24pt; border-bottom: 1px solid #e5e7eb; padding-bottom: 12pt;">
+            <h1 style="color: #db2777; font-size: 24pt; margin: 0; font-weight: bold;">AMPLIE - IA</h1>
+            <p style="font-size: 9pt; color: #6b7280; margin: 4pt 0 0 0;">Documento gerado por inteligência artificial em ${new Date().toLocaleDateString('pt-BR')}</p>
+          </div>
+          <div>
+            ${htmlContent}
+          </div>
+        </body>
+        </html>
+      `
+      const blob = new Blob(['\ufeff' + header], { type: 'application/msword;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `amplie-ia-documento-${Date.now()}.doc`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Erro ao gerar documento Word:', error)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleWordExport}
+      disabled={exporting}
+      title={exporting ? 'Exportando...' : 'Exportar para Word'}
+      aria-label={exporting ? 'Exportando...' : 'Exportar para Word'}
+      className={`
+        mt-1.5 flex items-center justify-center p-1 rounded-md transition-all duration-200 bg-transparent border-0 outline-none
+        ${exporting
+          ? 'text-pink-400 animate-pulse'
+          : 'text-gray-500 hover:text-blue-400 hover:scale-105'
+        }
+      `}
+      style={{ minWidth: '24px', minHeight: '24px' }}
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+        <path fillRule="evenodd" d="M4.5 2a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.379 2H4.5Zm6 1.5v3a1 1 0 0 0 1 1h3l-4-4Zm-4 6.25a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5H7.25a.75.75 0 0 1-.75-.75Zm0 3a.75.75 0 0 1 .75-.75h6.5a.75.75 0 0 1 0 1.5H7.25a.75.75 0 0 1-.75-.75Z" clipRule="evenodd" />
+      </svg>
+    </button>
+  )
+}
+
 
 function MessageBubble({ role, content }) {
   if (role === 'user') {
@@ -332,13 +615,25 @@ function MessageBubble({ role, content }) {
             h3: ({ children }) => <h3 className="text-base font-semibold text-white mb-1 mt-2">{children}</h3>,
             blockquote: ({ children }) => <blockquote className="border-l-2 border-pink-500 pl-3 my-2 text-gray-400 italic">{children}</blockquote>,
             img: ({ src, alt }) => <GeneratedImage src={src} alt={alt} />,
+            a: ({ href, children }) => (
+              <a 
+                href={href} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="text-pink-400 hover:text-pink-300 font-semibold underline decoration-pink-500/40 hover:decoration-pink-400 transition-all duration-200"
+              >
+                {children}
+              </a>
+            ),
           }}
         >
           {content}
         </ReactMarkdown>
-        <div className="flex items-center gap-1 mt-1">
+        <div className="flex items-center gap-1.5 mt-1">
           <SpeakButton text={content} />
           <CopyButton text={content} />
+          <PdfButton text={content} />
+          <WordButton text={content} />
         </div>
       </div>
     </div>
