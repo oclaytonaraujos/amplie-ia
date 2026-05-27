@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
+import AdminPanel from './AdminPanel'
+
 
 /* ── Icons ── */
 function GoogleIcon() {
@@ -49,6 +51,7 @@ function CheckIcon() {
 
 /* ── Main Component ── */
 export default function LoginScreen() {
+  const [showAdmin, setShowAdmin] = useState(false)
   const [tab, setTab] = useState('login') // 'login' | 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -59,6 +62,11 @@ export default function LoginScreen() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
   const [error, setError] = useState(null)
   const [successMsg, setSuccessMsg] = useState(null)
+
+  if (showAdmin) {
+    return <AdminPanel onBack={() => setShowAdmin(false)} />
+  }
+
 
   /* ── Reset state when switching tabs ── */
   function switchTab(t) {
@@ -455,6 +463,19 @@ export default function LoginScreen() {
           Seus dados são privados e isolados por conta.
         </p>
       </div>
+
+      {/* Secret Admin Padlock in Bottom Right */}
+      <button
+        type="button"
+        onClick={() => setShowAdmin(true)}
+        className="fixed bottom-4 right-4 p-2.5 rounded-full bg-white/5 border border-white/5 hover:border-pink-500/30 hover:bg-white/10 hover:text-pink-400 text-gray-600 transition-all duration-300 shadow-lg hover:shadow-pink-500/5 group z-50 animate-pulse"
+        aria-label="Painel Administrativo Secreto"
+        title="Painel Administrativo Secreto"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 transition-transform group-hover:scale-110">
+          <path fillRule="evenodd" d="M10 1a4.5 4.5 0 0 0-4.5 4.5V9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-.5V5.5A4.5 4.5 0 0 0 10 1Zm3 8V5.5a3 3 0 1 0-6 0V9h6Z" clipRule="evenodd" />
+        </svg>
+      </button>
     </div>
   )
 }
