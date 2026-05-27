@@ -620,9 +620,33 @@ function MessageBubble({ role, content }) {
                 href={href} 
                 target="_blank" 
                 rel="noopener noreferrer" 
-                className="text-pink-400 hover:text-pink-300 font-semibold underline decoration-pink-500/40 hover:decoration-pink-400 transition-all duration-200"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-semibold transition-all duration-200 text-pink-300 hover:text-white"
+                style={{
+                  background: 'linear-gradient(135deg, rgba(236,72,153,0.15), rgba(219,39,119,0.08))',
+                  border: '1px solid rgba(236,72,153,0.25)',
+                  textDecoration: 'none',
+                  boxShadow: '0 0 8px rgba(236,72,153,0.1)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(236,72,153,0.3), rgba(219,39,119,0.18))'
+                  e.currentTarget.style.borderColor = 'rgba(236,72,153,0.5)'
+                  e.currentTarget.style.boxShadow = '0 0 16px rgba(236,72,153,0.25)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(236,72,153,0.15), rgba(219,39,119,0.08))'
+                  e.currentTarget.style.borderColor = 'rgba(236,72,153,0.25)'
+                  e.currentTarget.style.boxShadow = '0 0 8px rgba(236,72,153,0.1)'
+                }}
               >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3 opacity-60 flex-shrink-0">
+                  <path d="M8.914 2.793a2.5 2.5 0 1 1 3.535 3.535l-2.5 2.5a2.5 2.5 0 0 1-3.536 0 .75.75 0 0 1 1.061-1.06 1 1 0 0 0 1.414 0l2.5-2.5a1 1 0 0 0-1.414-1.414l-.793.793a.75.75 0 1 1-1.06-1.06l.793-.794Z" />
+                  <path d="M6.854 7.854a2.5 2.5 0 0 1 3.536 0 .75.75 0 0 1-1.061 1.06 1 1 0 0 0-1.414 0l-2.5 2.5a1 1 0 1 0 1.414 1.414l.793-.793a.75.75 0 1 1 1.06 1.06l-.793.794a2.5 2.5 0 0 1-3.535-3.535l2.5-2.5Z" />
+                </svg>
                 {children}
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-2.5 h-2.5 opacity-40 flex-shrink-0">
+                  <path d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z" />
+                  <path d="M3.5 6.75c0-.69.56-1.25 1.25-1.25h2.5a.75.75 0 0 0 0-1.5h-2.5A2.75 2.75 0 0 0 2 6.75v4.5A2.75 2.75 0 0 0 4.75 14h4.5A2.75 2.75 0 0 0 12 11.25v-2.5a.75.75 0 0 0-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25h-4.5c-.69 0-1.25-.56-1.25-1.25v-4.5Z" />
+                </svg>
               </a>
             ),
           }}
