@@ -5,6 +5,7 @@ import { FiSidebar } from "react-icons/fi";
 import { LuMessageCircle } from "react-icons/lu";
 import { useAuth } from './context/AuthContext.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
+import ResetPasswordScreen from './components/ResetPasswordScreen.jsx'
 import UpgradePlanModal from './components/UpgradePlanModal.jsx'
 import PersonalizationModal, { loadAccentColor } from './components/PersonalizationModal.jsx'
 import ProfileEditModal from './components/ProfileEditModal.jsx'
@@ -1150,7 +1151,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
 /* ─────────────────────────── Main App ──────────────────────────── */
 
 export default function App() {
-  const { session, user, loading: authLoading, signOut } = useAuth()
+  const { session, user, loading: authLoading, signOut, needsPasswordReset, clearPasswordReset } = useAuth()
 
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState([])
@@ -1519,6 +1520,10 @@ export default function App() {
         </div>
       </div>
     )
+  }
+
+  if (needsPasswordReset) {
+    return <ResetPasswordScreen onComplete={clearPasswordReset} />
   }
 
   if (!session) {

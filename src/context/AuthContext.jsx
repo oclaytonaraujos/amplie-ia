@@ -5,11 +5,12 @@ const AuthContext = createContext(null)
 
 /**
  * Provê autenticação para toda a aplicação.
- * Expõe: { session, user, loading, signOut }
+ * Expõe: { session, user, loading, signOut, needsPasswordReset, clearPasswordReset }
  */
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [needsPasswordReset, setNeedsPasswordReset] = useState(false)
 
   useEffect(() => {
     // 1. Verificar sessão existente ao montar
@@ -18,11 +19,18 @@ export function AuthProvider({ children }) {
       setLoading(false)
     })
 
-    // 2. Escutar mudanças de autenticação (login, logout, token refresh)
+    // 2. Escutar mudanças de autenticação (login, logout, token refresh, password recovery)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         setSession(session)
         setLoading(false)
+
+        // Quando o usuário clica no link de redefinição de senha no e-mail,
+        // o Supabase emite o evento PASSWORD_RECOVERY. Marcamos o flag para
+        // exibir a tela de nova senha em vez de entrar direto no chat.
+        if (event === 'PASSWORD_RECOVERY') {
+          setNeedsPasswordReset(true)
+        }
       }
     )
 
@@ -32,7 +40,12 @@ export function AuthProvider({ children }) {
 
   async function signOut() {
     await supabase.auth.signOut()
+    setNeedsPasswordReset(false)
     // O onAuthStateChange vai setar session = null automaticamente
+  }
+
+  function clearPasswordReset() {
+    setNeedsPasswordReset(false)
   }
 
   const value = {
@@ -40,6 +53,8 @@ export function AuthProvider({ children }) {
     user: session?.user ?? null,
     loading,
     signOut,
+    needsPasswordReset,
+    clearPasswordReset,
   }
 
   return (
