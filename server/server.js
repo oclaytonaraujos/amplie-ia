@@ -22,7 +22,7 @@ const app = express()
 const PORT = process.env.PORT || 3001
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
 
 /**
  * Cliente Supabase para verificação de JWT (usa anon key — seguro para auth.getUser)
@@ -332,6 +332,37 @@ function toGeminiContents(messages) {
   })
 }
 
+/**
+ * Tratamento centralizado de erros da API do Gemini.
+ */
+function handleGeminiError(err, res, defaultMsg = 'Erro interno do servidor.') {
+  console.error('=== ERRO DO GEMINI ===')
+  console.error('Mensagem:', err.message)
+  console.error('Status HTTP:', err.status)
+  console.error('Código:', err.code)
+  if (err.errorDetails) console.error('Detalhes:', JSON.stringify(err.errorDetails))
+
+  if (err.status === 401 || err.message?.includes('API key') || err.message?.includes('API_KEY')) {
+    return res.status(401).json({ error: 'Chave da API do Gemini inválida ou não configurada.' })
+  }
+
+  if (err.status === 403 || err.message?.includes('denied') || err.message?.includes('access') || err.message?.includes('403') || err.message?.includes('PERMISSION_DENIED')) {
+    return res.status(403).json({ error: `Acesso negado à API do Gemini. O modelo configurado (${GEMINI_MODEL}) pode não estar disponível ou autorizado para sua chave de API.` })
+  }
+
+  const is429 =
+    err.status === 429 ||
+    err.message?.includes('quota') ||
+    err.message?.includes('Resource has been exhausted') ||
+    err.message?.includes('RESOURCE_EXHAUSTED') ||
+    err.message?.includes('429')
+  if (is429) {
+    return res.status(429).json({ error: 'Limite de uso da IA atingido (Quota excedida). Aguarde alguns segundos e tente novamente.' })
+  }
+
+  return res.status(500).json({ error: defaultMsg })
+}
+
 /* ══════════════════════════════════════════════════
    CHAT ENDPOINT (with persistence)
    ══════════════════════════════════════════════════ */
@@ -446,26 +477,7 @@ app.post('/api/chat', authenticate, async (req, res) => {
       },
     })
   } catch (err) {
-    console.error('=== ERRO no Chat/Imagem ===')
-    console.error('Mensagem:', err.message)
-    console.error('Status HTTP:', err.status)
-    console.error('Código:', err.code)
-    if (err.errorDetails) console.error('Detalhes:', JSON.stringify(err.errorDetails))
-
-    if (err.status === 401 || err.message?.includes('API key') || err.message?.includes('API_KEY')) {
-      return res.status(401).json({ error: 'Chave da API inválida.' })
-    }
-    const is429 =
-      err.status === 429 ||
-      err.message?.includes('quota') ||
-      err.message?.includes('Resource has been exhausted') ||
-      err.message?.includes('RESOURCE_EXHAUSTED') ||
-      err.message?.includes('429')
-    if (is429) {
-      return res.status(429).json({ error: 'Limite de uso da IA atingido. Aguarde alguns segundos e tente novamente.' })
-    }
-
-    return res.status(500).json({ error: 'Erro interno do servidor.' })
+    return handleGeminiError(err, res, 'Erro ao processar mensagem no chat.')
   }
 })
 
@@ -550,12 +562,11 @@ app.post('/api/transcribe', authenticate, upload.single('audio'), async (req, re
     const text = result.text.trim()
     return res.json({ text })
   } catch (err) {
-    console.error('Erro na transcrição:', err.message)
     if (req.file?.path) {
       try { fs.unlinkSync(req.file.path) } catch {}
       try { fs.unlinkSync(req.file.path + '.' + (req.file.originalname?.split('.').pop() || 'webm')) } catch {}
     }
-    return res.status(500).json({ error: 'Erro ao transcrever áudio.' })
+    return handleGeminiError(err, res, 'Erro ao transcrever áudio.')
   }
 })
 
