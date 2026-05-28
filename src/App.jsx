@@ -98,6 +98,14 @@ function XMarkIcon() {
   )
 }
 
+function PencilIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+      <path d="m2.695 14.762-1.262 3.155a.5.5 0 0 0 .65.65l3.155-1.262a4 4 0 0 0 1.343-.886L17.5 5.501a2.121 2.121 0 0 0-3-3L3.58 13.419a4 4 0 0 0-.885 1.343Z" />
+    </svg>
+  )
+}
+
 function FileIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-3.5 h-3.5 flex-shrink-0">
@@ -544,7 +552,10 @@ function WordButton({ text }) {
 }
 
 
-function MessageBubble({ role, content, isLast, isLoading, onRegenerate }) {
+function MessageBubble({ role, content, index, isLast, isLoading, onRegenerate, onEdit }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [editText, setEditText] = useState('')
+
   if (role === 'user') {
     // Parse normal files
     const fileRegex = /\[FILE_ATTACHMENT:(.*?)\]\n([\s\S]*?)\n\[\/FILE_ATTACHMENT\]/g
@@ -566,15 +577,65 @@ function MessageBubble({ role, content, isLast, isLoading, onRegenerate }) {
 
     let cleanText = content.replace(fileRegex, '').replace(imageRegex, '').trim()
 
+    const handleStartEdit = () => {
+      setEditText(cleanText)
+      setIsEditing(true)
+    }
+
+    if (isEditing) {
+      return (
+        <div className="flex justify-end message-appear w-full">
+          <div className="w-[75%] bg-[#1e1e1e] border border-white/8 p-4 rounded-2xl rounded-br-sm flex flex-col gap-3 shadow-xl">
+            <textarea
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              rows={3}
+              className="w-full bg-[#2a2a2a] border border-white/8 rounded-xl px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:border-pink-500/30 resize-none transition-colors"
+            />
+            <div className="flex justify-end gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditing(false)
+                  setEditText(cleanText)
+                }}
+                className="px-3 py-1.5 rounded-lg border border-white/10 text-gray-300 hover:bg-white/5 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!editText.trim()) return
+                  // Reconstruct full content
+                  const imageContext = images.map(img => `[IMAGE_ATTACHMENT:${img.name}]${img.base64}[/IMAGE_ATTACHMENT]`).join('\n')
+                  const fileContext = files.map(f => `[FILE_ATTACHMENT:${f.name}]\n${f.content}\n[/FILE_ATTACHMENT]`).join('\n\n')
+                  
+                  const contexts = [imageContext, fileContext].filter(Boolean).join('\n\n')
+                  const fullContent = contexts ? `${contexts}\n\n${editText.trim()}` : editText.trim()
+
+                  onEdit?.(index, fullContent)
+                  setIsEditing(false)
+                }}
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-400 hover:to-rose-400 text-white font-medium shadow-md shadow-pink-500/10 transition-all"
+              >
+                Salvar e Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
     return (
-      <div className="flex justify-end message-appear">
-        <div className="max-w-[75%] bg-chat-user px-4 py-3 rounded-2xl rounded-br-sm text-[15px] leading-relaxed flex flex-col gap-2">
+      <div className="flex justify-end message-appear group">
+        <div className="max-w-[75%] bg-chat-user px-4 py-3 rounded-2xl rounded-br-sm text-[15px] leading-relaxed flex flex-col gap-2 relative">
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-1">
               {images.map((img, i) => (
-                <div key={`img-${i}`} className="relative rounded-lg overflow-hidden border border-white/10 group max-w-[200px] max-h-[200px]">
+                <div key={`img-${i}`} className="relative rounded-lg overflow-hidden border border-white/10 group-img max-w-[200px] max-h-[200px]">
                   <img src={img.base64} alt={img.name} className="w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-img-hover:opacity-100 transition-opacity flex items-end p-2">
                     <span className="text-xs text-white truncate">{img.name}</span>
                   </div>
                 </div>
@@ -592,6 +653,22 @@ function MessageBubble({ role, content, isLast, isLoading, onRegenerate }) {
             </div>
           )}
           {cleanText && <div className="whitespace-pre-wrap">{cleanText}</div>}
+
+          {/* Subtle Edit Button */}
+          {!isLoading && (
+            <div className="flex justify-end -mr-1.5 -mb-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                title="Editar mensagem"
+                aria-label="Editar mensagem"
+                className="text-gray-400 hover:text-white p-1 rounded hover:bg-white/10 transition-all flex items-center justify-center"
+                style={{ width: '22px', height: '22px' }}
+              >
+                <PencilIcon />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -1544,6 +1621,52 @@ export default function App() {
     }
   }
 
+  /* ── Edit Message ── */
+  async function handleEditMessage(index, newContent) {
+    if (isLoading) return
+
+    // Slice messages up to the edited message, and replace its content
+    const updatedMessagesForApi = messages.slice(0, index)
+    const editedUserMessage = { role: 'user', content: newContent }
+    updatedMessagesForApi.push(editedUserMessage)
+
+    setMessages(updatedMessagesForApi)
+    setIsLoading(true)
+
+    try {
+      const convId = activeConversationId
+      if (!convId) throw new Error('Nenhuma conversa ativa')
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Erro do servidor: ${res.status}`)
+      }
+
+      const data = await res.json()
+      setMessages((prev) => [...prev, data.message])
+
+      // Refresh sidebar to get updated title
+      await fetchConversations()
+    } catch (err) {
+      console.error('Erro ao editar e reenviar mensagem:', err)
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '⚠️ Desculpe, ocorreu um erro ao processar sua mensagem editada. Tente novamente.',
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+      textareaRef.current?.focus()
+    }
+  }
+
   /* ── Keyboard handler ── */
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1712,9 +1835,11 @@ export default function App() {
                   key={i}
                   role={msg.role}
                   content={msg.content}
+                  index={i}
                   isLast={i === messages.length - 1}
                   isLoading={isLoading}
                   onRegenerate={handleRegenerateResponse}
+                  onEdit={handleEditMessage}
                 />
               ))}
               {isLoading && <TypingIndicator />}
