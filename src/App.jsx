@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { MdOutlineEditNote } from "react-icons/md";
 import { FiSidebar } from "react-icons/fi";
-import { LuMessageCircle } from "react-icons/lu";
+import { LuMessageCircle, LuRefreshCw } from "react-icons/lu";
 import { HiSpeakerWave } from "react-icons/hi2";
 import { useAuth } from './context/AuthContext.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
@@ -544,7 +544,7 @@ function WordButton({ text }) {
 }
 
 
-function MessageBubble({ role, content }) {
+function MessageBubble({ role, content, isLast, isLoading, onRegenerate }) {
   if (role === 'user') {
     // Parse normal files
     const fileRegex = /\[FILE_ATTACHMENT:(.*?)\]\n([\s\S]*?)\n\[\/FILE_ATTACHMENT\]/g
@@ -661,6 +661,17 @@ function MessageBubble({ role, content }) {
           <CopyButton text={content} />
           <PdfButton text={content} />
           <WordButton text={content} />
+          {isLast && !isLoading && (
+            <button
+              onClick={onRegenerate}
+              title="Refazer resposta"
+              aria-label="Refazer resposta"
+              className="mt-1.5 flex items-center justify-center p-1 rounded-md transition-all duration-200 bg-transparent border-0 outline-none text-gray-500 hover:text-pink-400 hover:scale-105"
+              style={{ minWidth: '24px', minHeight: '24px' }}
+            >
+              <LuRefreshCw className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1490,6 +1501,49 @@ export default function App() {
     }
   }
 
+  /* ── Regenerate Response ── */
+  async function handleRegenerateResponse() {
+    if (isLoading || messages.length === 0) return
+
+    const lastMsg = messages[messages.length - 1]
+    if (lastMsg.role !== 'assistant') return
+
+    // Remove the last message from state to trigger visual update and prepare prompt history
+    const updatedMessagesForApi = messages.slice(0, -1)
+    setMessages(updatedMessagesForApi)
+    setIsLoading(true)
+
+    try {
+      const convId = activeConversationId
+      if (!convId) throw new Error('Nenhuma conversa ativa')
+
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Erro do servidor: ${res.status}`)
+      }
+
+      const data = await res.json()
+      setMessages((prev) => [...prev, data.message])
+    } catch (err) {
+      console.error('Erro ao refazer a resposta:', err)
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: '⚠️ Desculpe, ocorreu um erro ao refazer a resposta. Tente novamente.',
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+      textareaRef.current?.focus()
+    }
+  }
+
   /* ── Keyboard handler ── */
   function handleKeyDown(e) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1654,7 +1708,14 @@ export default function App() {
           ) : (
             <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
               {messages.map((msg, i) => (
-                <MessageBubble key={i} role={msg.role} content={msg.content} />
+                <MessageBubble
+                  key={i}
+                  role={msg.role}
+                  content={msg.content}
+                  isLast={i === messages.length - 1}
+                  isLoading={isLoading}
+                  onRegenerate={handleRegenerateResponse}
+                />
               ))}
               {isLoading && <TypingIndicator />}
               <div ref={messagesEndRef} />
