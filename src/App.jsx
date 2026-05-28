@@ -1267,6 +1267,7 @@ export default function App() {
   const mediaRecorderRef = useRef(null)
   const audioChunksRef = useRef([])
   const recordingTimerRef = useRef(null)
+  const abortControllerRef = useRef(null)
 
   /* ── Helper: Authorization header para o backend ── */
   function authHeaders() {
@@ -1538,6 +1539,13 @@ export default function App() {
       textareaRef.current.style.height = 'auto'
     }
 
+    // Abort any existing request first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       // Create conversation if this is the first message
       let convId = activeConversationId
@@ -1552,6 +1560,7 @@ export default function App() {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -1564,15 +1573,29 @@ export default function App() {
       // Refresh sidebar to get updated title
       await fetchConversations()
     } catch (err) {
-      console.error('Erro ao enviar mensagem:', err)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: '⚠️ Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.',
-        },
-      ])
+      if (err.name === 'AbortError') {
+        console.log('Geração interrompida pelo usuário.')
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⏹️ Geração interrompida pelo usuário.',
+          },
+        ])
+      } else {
+        console.error('Erro ao enviar mensagem:', err)
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⚠️ Desculpe, ocorreu um erro ao processar sua mensagem. Tente novamente.',
+          },
+        ])
+      }
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
       setIsLoading(false)
       textareaRef.current?.focus()
     }
@@ -1590,6 +1613,13 @@ export default function App() {
     setMessages(updatedMessagesForApi)
     setIsLoading(true)
 
+    // Abort any existing request first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       const convId = activeConversationId
       if (!convId) throw new Error('Nenhuma conversa ativa')
@@ -1598,6 +1628,7 @@ export default function App() {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -1607,15 +1638,29 @@ export default function App() {
       const data = await res.json()
       setMessages((prev) => [...prev, data.message])
     } catch (err) {
-      console.error('Erro ao refazer a resposta:', err)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: '⚠️ Desculpe, ocorreu um erro ao refazer a resposta. Tente novamente.',
-        },
-      ])
+      if (err.name === 'AbortError') {
+        console.log('Geração interrompida pelo usuário.')
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⏹️ Geração interrompida pelo usuário.',
+          },
+        ])
+      } else {
+        console.error('Erro ao refazer a resposta:', err)
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⚠️ Desculpe, ocorreu um erro ao refazer a resposta. Tente novamente.',
+          },
+        ])
+      }
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
       setIsLoading(false)
       textareaRef.current?.focus()
     }
@@ -1633,6 +1678,13 @@ export default function App() {
     setMessages(updatedMessagesForApi)
     setIsLoading(true)
 
+    // Abort any existing request first
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    const controller = new AbortController()
+    abortControllerRef.current = controller
+
     try {
       const convId = activeConversationId
       if (!convId) throw new Error('Nenhuma conversa ativa')
@@ -1641,6 +1693,7 @@ export default function App() {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ messages: updatedMessagesForApi, conversationId: convId }),
+        signal: controller.signal,
       })
 
       if (!res.ok) {
@@ -1653,18 +1706,41 @@ export default function App() {
       // Refresh sidebar to get updated title
       await fetchConversations()
     } catch (err) {
-      console.error('Erro ao editar e reenviar mensagem:', err)
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: '⚠️ Desculpe, ocorreu um erro ao processar sua mensagem editada. Tente novamente.',
-        },
-      ])
+      if (err.name === 'AbortError') {
+        console.log('Geração interrompida pelo usuário.')
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⏹️ Geração interrompida pelo usuário.',
+          },
+        ])
+      } else {
+        console.error('Erro ao editar e reenviar mensagem:', err)
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '⚠️ Desculpe, ocorreu um erro ao processar sua mensagem editada. Tente novamente.',
+          },
+        ])
+      }
     } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null
+      }
       setIsLoading(false)
       textareaRef.current?.focus()
     }
+  }
+
+  /* ── Stop Generation ── */
+  function handleStopGeneration() {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+    }
+    setIsLoading(false)
   }
 
   /* ── Keyboard handler ── */
@@ -1952,6 +2028,15 @@ export default function App() {
                   >
                     <StopCircleIcon className="w-4 h-4" />
                     <span>Parar</span>
+                  </button>
+                ) : isLoading ? (
+                  <button
+                    onClick={handleStopGeneration}
+                    className="w-9 h-9 rounded-full flex items-center justify-center bg-pink-500 hover:bg-pink-400 active:bg-pink-600 text-white cursor-pointer transition-all duration-200"
+                    aria-label="Interromper geração"
+                    title="Interromper geração"
+                  >
+                    <StopCircleIcon className="w-5 h-5" />
                   </button>
                 ) : (
                   <>
