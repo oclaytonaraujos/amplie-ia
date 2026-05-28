@@ -180,9 +180,13 @@ function SpeakButton({ text }) {
     utterance.rate = 1.0
     utterance.pitch = 1.0
 
-    // Try to pick a Portuguese voice
+    // Try to pick the user's selected Portuguese voice, or fallback to the first available Portuguese voice
     const voices = window.speechSynthesis.getVoices()
-    const ptVoice = voices.find(v => v.lang.startsWith('pt'))
+    const selectedVoiceName = localStorage.getItem('amplie_tts_voice')
+    let ptVoice = voices.find(v => v.name === selectedVoiceName)
+    if (!ptVoice) {
+      ptVoice = voices.find(v => v.lang.startsWith('pt'))
+    }
     if (ptVoice) utterance.voice = ptVoice
 
     utterance.onstart = () => setSpeaking(true)

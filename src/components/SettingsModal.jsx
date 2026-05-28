@@ -1,5 +1,5 @@
 /* ──────────────────── SettingsModal.jsx ──────────────────── */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 function Toggle({ checked, onChange }) {
   return (
@@ -53,7 +53,25 @@ export default function SettingsModal({ onClose, onClearConversations }) {
   const [autoScroll, setAutoScroll] = useState(() => localStorage.getItem('amplie_autoscroll') !== 'false')
   const [sound, setSound]         = useState(() => localStorage.getItem('amplie_sound') === 'true')
   const [customInstructions, setCustomInstructions] = useState(() => localStorage.getItem('amplie_instructions') || '')
+  const [voiceName, setVoiceName] = useState(() => localStorage.getItem('amplie_tts_voice') || '')
+  const [availableVoices, setAvailableVoices] = useState([])
   const [confirmClear, setConfirmClear] = useState(false)
+
+  useEffect(() => {
+    if (!window.speechSynthesis) return
+
+    function loadVoices() {
+      const voices = window.speechSynthesis.getVoices()
+      // Filter for Portuguese voices (usually pt-BR, pt-PT)
+      const ptVoices = voices.filter(v => v.lang.toLowerCase().includes('pt'))
+      setAvailableVoices(ptVoices)
+    }
+
+    loadVoices()
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = loadVoices
+    }
+  }, [])
 
   function save(key, value, setter) {
     setter(value)
@@ -129,6 +147,26 @@ export default function SettingsModal({ onClose, onClearConversations }) {
           >
             <Toggle checked={markdown} onChange={(v) => save('amplie_markdown', v, setMarkdown)} />
           </SettingRow>
+
+          {availableVoices.length > 0 && (
+            <SettingRow
+              label="Voz da leitura"
+              description="Escolha a voz usada para ouvir as respostas."
+            >
+              <select
+                value={voiceName}
+                onChange={(e) => save('amplie_tts_voice', e.target.value, setVoiceName)}
+                className="bg-[#2a2a2a] border border-white/8 rounded-lg px-2 py-1.5 text-xs text-white outline-none focus:border-white/20 max-w-[180px] truncate"
+              >
+                <option value="">Voz padrão do sistema</option>
+                {availableVoices.map((v) => (
+                  <option key={v.name} value={v.name}>
+                    {v.name} ({v.lang})
+                  </option>
+                ))}
+              </select>
+            </SettingRow>
+          )}
 
           {/* ── Instruções personalizadas ── */}
           <SectionTitle>Instruções personalizadas</SectionTitle>
