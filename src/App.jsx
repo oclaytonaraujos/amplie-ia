@@ -12,6 +12,7 @@ import PersonalizationModal, { loadAccentColor } from './components/Personalizat
 import ProfileEditModal from './components/ProfileEditModal.jsx'
 import SettingsModal from './components/SettingsModal.jsx'
 import HelpModal from './components/HelpModal.jsx'
+import TenantSettingsModal from './components/TenantSettingsModal.jsx'
 import { jsPDF } from 'jspdf'
 import html2canvas from 'html2canvas'
 
@@ -998,7 +999,7 @@ function SidebarItem({ icon, text, onClick, collapsed, active, dangerAction }) {
 
 /* ────────────────────────── Sidebar ────────────────────────────── */
 
-function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch, onSignOut, onOpenModal, user }) {
+function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch, onSignOut, onOpenModal, onOpenTenantTab, user }) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef(null)
 
@@ -1104,8 +1105,65 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
           />
         </div>
 
+        {/* Módulos Corporativos */}
+        <div className="py-2 flex flex-col border-t border-white/5">
+          <div className={`px-[22px] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap mb-2 truncate transition-opacity duration-300 ${collapsed ? 'opacity-0 h-0 overflow-hidden' : 'opacity-60'}`}>
+            Empresa & Agente
+          </div>
+          <SidebarItem 
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
+                <path fillRule="evenodd" d="M4 16.5v-13h12v13h-12ZM5.5 5v1.5h9V5h-9ZM5.5 8v1.5h9V8h-9ZM5.5 11v1.5h9V11h-9Z" clipRule="evenodd" />
+              </svg>
+            }
+            text="Minha Empresa"
+            onClick={() => onOpenTenantTab?.('brand')}
+            collapsed={collapsed}
+          />
+          <SidebarItem 
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
+                <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7 9a7 7 0 1 1 14 0H3Z" />
+              </svg>
+            }
+            text="CRM Contatos"
+            onClick={() => onOpenTenantTab?.('crm')}
+            collapsed={collapsed}
+          />
+          <SidebarItem 
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
+                <path fillRule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-2.25 7v6.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V9H3.5Zm0-1.5h13V6.75c0-.69-.56-1.25-1.25-1.25h-10.5c-.69 0-1.25.56-1.25 1.25V7.5Z" clipRule="evenodd" />
+              </svg>
+            }
+            text="Agenda Compromissos"
+            onClick={() => onOpenTenantTab?.('agenda')}
+            collapsed={collapsed}
+          />
+          <SidebarItem 
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
+                <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.379 2H4.5Zm6 1.5v3a1 1 0 0 0 1 1h3l-4-4Z" clipRule="evenodd" />
+              </svg>
+            }
+            text="Biblioteca Entregáveis"
+            onClick={() => onOpenTenantTab?.('documents')}
+            collapsed={collapsed}
+          />
+          <SidebarItem 
+            icon={
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
+                <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v1.618c-.314.015-.626.044-.934.086a3.75 3.75 0 0 0-3.037 4.025 3.75 3.75 0 0 0 3.037 4.026c.308.041.62.07.934.085v1.618a.75.75 0 0 0 1.5 0v-1.618c.314-.015.626-.044.934-.086a3.75 3.75 0 0 0 3.037-4.025 3.75 3.75 0 0 0-3.037-4.026a7.126 7.126 0 0 0-.934-.085V2.75Zm-1.5 3.125v4.25a2.25 2.25 0 0 1-1.619-2.125A2.25 2.25 0 0 1 9.25 5.875Zm1.5 8.25v-4.25a2.25 2.25 0 0 1 1.619 2.125A2.25 2.25 0 0 1 10.75 14.125Z" />
+              </svg>
+            }
+            text="Gestão Financeira"
+            onClick={() => onOpenTenantTab?.('finance')}
+            collapsed={collapsed}
+          />
+        </div>
+
         {/* Conversation List */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden py-1">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden py-1 border-t border-white/5">
           {conversations.length > 0 && (
             <div 
               className={`
@@ -1167,6 +1225,13 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
                     <path d="M10 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3.465 14.493a1.23 1.23 0 0 0 .41 1.412A9.957 9.957 0 0 0 10 18c2.31 0 4.438-.784 6.131-2.1.43-.333.604-.903.408-1.41a7.002 7.002 0 0 0-13.074.003Z" />
                   </svg>
                   <span>Perfil</span>
+                </button>
+
+                <button onClick={() => { setProfileMenuOpen(false); onOpenModal('tenant_settings') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-pink-400">
+                    <path fillRule="evenodd" d="M4 16.5v-13h12v13h-12ZM5.5 5v1.5h9V5h-9ZM5.5 8v1.5h9V8h-9ZM5.5 11v1.5h9V11h-9Z" clipRule="evenodd" />
+                  </svg>
+                  <span className="font-semibold text-pink-400">Minha Empresa</span>
                 </button>
 
                 <button onClick={() => { setProfileMenuOpen(false); onOpenModal('settings') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
@@ -1257,6 +1322,12 @@ export default function App() {
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [activeModal, setActiveModal] = useState(null) // 'upgrade'|'personalization'|'profile'|'settings'|'help'
+  const [tenantSettingsTab, setTenantSettingsTab] = useState('brand')
+
+  function handleOpenTenantTab(tab) {
+    setTenantSettingsTab(tab)
+    setActiveModal('tenant_settings')
+  }
 
   // Apply saved accent color on mount
   useEffect(() => { loadAccentColor() }, [])
@@ -1869,6 +1940,9 @@ export default function App() {
       {activeModal === 'help' && (
         <HelpModal onClose={() => setActiveModal(null)} />
       )}
+      {activeModal === 'tenant_settings' && (
+        <TenantSettingsModal onClose={() => setActiveModal(null)} session={session} initialTab={tenantSettingsTab} />
+      )}
 
       {/* Sidebar */}
       <Sidebar
@@ -1884,6 +1958,7 @@ export default function App() {
         onOpenSearch={() => setIsSearchModalOpen(true)}
         onSignOut={handleSignOut}
         onOpenModal={(modal) => setActiveModal(modal)}
+        onOpenTenantTab={handleOpenTenantTab}
         user={user}
       />
 

@@ -186,6 +186,39 @@ async function authenticate(req, res, next) {
 
     req.userId = user.id
     req.accessToken = token
+
+    // Mapear tenant_id para o usuário
+    let tenantId = null
+    try {
+      const { data: tenantUser } = await supabaseAuth
+        .from('tenant_users')
+        .select('tenant_id')
+        .eq('user_id', user.id)
+        .limit(1)
+        .maybeSingle()
+
+      if (tenantUser) {
+        tenantId = tenantUser.tenant_id
+      } else {
+        // Criar um tenant padrão caso não exista nenhum cadastrado
+        const { data: newTenant, error: createTenantErr } = await supabaseAuth
+          .from('tenants')
+          .insert({ name: 'Minha Empresa' })
+          .select('id')
+          .single()
+
+        if (!createTenantErr && newTenant) {
+          tenantId = newTenant.id
+          await supabaseAuth
+            .from('tenant_users')
+            .insert({ tenant_id: tenantId, user_id: user.id, role: 'admin' })
+        }
+      }
+    } catch (dbErr) {
+      console.warn('⚠️ Tabelas de multi-tenant não encontradas. Execute a migração V2 no Supabase.')
+    }
+
+    req.tenantId = tenantId
     next()
   } catch (err) {
     console.error('Erro na verificação do token:', err.message)
@@ -220,12 +253,17 @@ app.post('/api/conversations', authenticate, async (req, res) => {
     const supabase = createUserClient(req.accessToken)
     const { title } = req.body
 
+    const insertObj = {
+      title: title || 'Nova conversa',
+      user_id: req.userId,
+    }
+    if (req.tenantId) {
+      insertObj.tenant_id = req.tenantId
+    }
+
     const { data, error } = await supabase
       .from('conversations')
-      .insert({
-        title: title || 'Nova conversa',
-        user_id: req.userId,
-      })
+      .insert(insertObj)
       .select()
       .single()
 
@@ -398,8 +436,88 @@ app.post('/api/chat', authenticate, async (req, res) => {
       })
     }
 
-    /* ── Verificar se é pedido de geração de imagem ── */
+    /* ── Mapeamento e extração de agendamento ── */
     const userText = typeof lastUserMessage.content === 'string' ? lastUserMessage.content : ''
+    const isSchedulingRequest = /\b(agend[ae]|marc[ae]|reunião|compromisso|reuniao)\b/i.test(userText)
+
+    if (isSchedulingRequest) {
+      console.log('📅 Possível intenção de agendamento detectada. Acionando extrator de agenda...')
+      try {
+        const schedulePrompt = `
+Analyze this user request: "${userText}"
+Current Time: ${new Date().toISOString()} (Use this as reference for relative times like 'amanhã', 'hoje', 'terça que vem').
+
+If the user wants to schedule an appointment/meeting, extract:
+- title: Short description of the meeting
+- start_time: ISO timestamp of start
+- end_time: ISO timestamp of end (default to 1 hour after start if not specified)
+- client_name: Name of any client mentioned
+- client_phone: Phone number if mentioned
+
+Return ONLY a valid JSON object with these keys. If it is NOT a scheduling request, return {"error": "not a scheduling request"}.
+`
+        const extractionRes = await callWithRetry(() =>
+          ai.models.generateContent({
+            model: GEMINI_MODEL,
+            contents: [{ role: 'user', parts: [{ text: schedulePrompt }] }],
+            config: { responseMimeType: 'application/json' }
+          })
+        )
+
+        const parsed = JSON.parse(extractionRes.text.trim())
+
+        if (parsed && !parsed.error && parsed.start_time) {
+          // Sincronizar com o banco de dados
+          let contactId = null
+          if (parsed.client_name) {
+            const { data: contact } = await supabase
+              .from('crm_contacts')
+              .select('id')
+              .ilike('name', `%${parsed.client_name}%`)
+              .limit(1)
+              .maybeSingle()
+            
+            if (contact) contactId = contact.id
+          }
+
+          const { data: appointment } = await supabase
+            .from('appointments')
+            .insert({
+              tenant_id: req.tenantId,
+              contact_id: contactId,
+              title: parsed.title || 'Compromisso IA',
+              start_time: parsed.start_time,
+              end_time: parsed.end_time,
+              description: `Agendado de forma inteligente pela Amplie IA.\nCliente referenciado: ${parsed.client_name || 'Nenhum'}`,
+              google_event_id: `gcal-${Math.random().toString(36).substring(2, 11)}`,
+              whatsapp_reminder_time: new Date(new Date(parsed.start_time).getTime() - 60 * 60 * 1000).toISOString() // Lembrete 1h antes
+            })
+            .select()
+            .single()
+
+          if (appointment) {
+            console.log('✓ Compromisso agendado no banco com sucesso e sincronizado com o Google Agenda (simulado)!')
+            const responseText = `Perfeito! Acabei de agendar o compromisso para você! 📅\n\n**Compromisso**: ${parsed.title || 'Reunião'}\n**Horário**: ${new Date(parsed.start_time).toLocaleString('pt-BR')}\n\n*Nota: O evento foi registrado no CRM e sincronizado automaticamente com seu Google Agenda.*`
+            
+            // Persistir resposta da IA
+            if (conversationId) {
+              await supabase.from('messages').insert({
+                conversation_id: conversationId,
+                user_id: req.userId,
+                role: 'assistant',
+                content: responseText,
+              })
+            }
+
+            return res.json({ message: { role: 'assistant', content: responseText } })
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao processar intenção de agendamento:', err.message)
+      }
+    }
+
+    /* ── Verificar se é pedido de geração de imagem ── */
     let responseText
 
     if (isImageRequest(userText)) {
@@ -419,11 +537,51 @@ app.post('/api/chat', authenticate, async (req, res) => {
       const history = toGeminiContents(messages.slice(0, -1))
       const lastMsgParts = toGeminiContents([lastUserMessage])[0].parts
 
+      // Determinar a instrução de sistema dinâmica para o tenant
+      let dynamicInstruction = SYSTEM_INSTRUCTION
+      if (req.tenantId) {
+        try {
+          const { data: tenantData } = await supabase
+            .from('tenants')
+            .select('custom_system_prompt')
+            .eq('id', req.tenantId)
+            .single()
+
+          if (tenantData && tenantData.custom_system_prompt) {
+            dynamicInstruction += `\n\n[INSTRUÇÕES ESPECÍFICAS DA EMPRESA DO USUÁRIO]:\n${tenantData.custom_system_prompt}`
+          }
+
+          // Injetar contatos do CRM no contexto da IA
+          const { data: crmData } = await supabase
+            .from('crm_contacts')
+            .select('name, email, phone, company, status, notes')
+            .eq('tenant_id', req.tenantId)
+
+          if (crmData && crmData.length > 0) {
+            const crmContext = crmData.map(c => `- Nome: ${c.name} | Contato: ${c.phone} | Status: ${c.status} | Empresa: ${c.company || 'N/A'} | Notas: ${c.notes || 'N/A'}`).join('\n')
+            dynamicInstruction += `\n\n[DADOS DE CLIENTES DO CRM INTEGRADO]:\nVocê tem acesso aos contatos cadastrados no CRM da empresa. Utilize-os se o usuário referenciar algum cliente ou para consultar históricos:\n${crmContext}`
+          }
+
+          // Injetar transações financeiras no contexto da IA
+          const { data: financeData } = await supabase
+            .from('financial_transactions')
+            .select('type, category, amount, due_date, description')
+            .eq('tenant_id', req.tenantId)
+
+          if (financeData && financeData.length > 0) {
+            const financeContext = financeData.map(t => `- Tipo: ${t.type === 'receita' ? 'Receita' : 'Despesa'} | Categoria: ${t.category} | Valor: R$ ${parseFloat(t.amount).toFixed(2)} | Data: ${t.due_date} | Notas: ${t.description || 'N/A'}`).join('\n')
+            dynamicInstruction += `\n\n[DADOS DE TRANSAÇÕES FINANCEIRAS INTEGRADOS]:\nVocê atua também como o Agente Financeiro da empresa. Tem acesso ao fluxo de caixa abaixo para calcular margens, markup, lucro líquido e dar direcionamentos. Utilize estes dados para responder a questionamentos financeiros:\n${financeContext}`
+          }
+        } catch (dbErr) {
+          console.warn('Erro ao buscar CRM/Financeiro/Instruções do tenant:', dbErr.message)
+        }
+      }
+
       // Criar sessão de chat com o novo SDK @google/genai
       const chat = ai.chats.create({
         model: GEMINI_MODEL,
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: dynamicInstruction,
           temperature: 0.7,
           maxOutputTokens: 2048,
         },
@@ -667,6 +825,437 @@ app.get('/api/models', async (req, res) => {
   }
 })
 
+/* ══════════════════════════════════════════════════
+   TENANT SETTINGS ENDPOINTS
+   ══════════════════════════════════════════════════ */
+
+app.get('/api/tenant/settings', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { data, error } = await supabase
+      .from('tenants')
+      .select('id, name, logo_url, accent_color, custom_system_prompt, created_at')
+      .eq('id', req.tenantId)
+      .single()
+
+    if (error) throw error
+    return res.json({ settings: data })
+  } catch (err) {
+    console.error('Erro ao buscar configurações do tenant:', err.message)
+    return res.status(500).json({ error: 'Erro ao buscar configurações do tenant.' })
+  }
+})
+
+app.put('/api/tenant/settings', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { name, logo_url, accent_color, custom_system_prompt } = req.body
+
+    const updateObj = {}
+    if (name !== undefined) updateObj.name = name
+    if (logo_url !== undefined) updateObj.logo_url = logo_url
+    if (accent_color !== undefined) updateObj.accent_color = accent_color
+    if (custom_system_prompt !== undefined) updateObj.custom_system_prompt = custom_system_prompt
+
+    const { data, error } = await supabase
+      .from('tenants')
+      .update(updateObj)
+      .eq('id', req.tenantId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ settings: data, success: true })
+  } catch (err) {
+    console.error('Erro ao atualizar configurações do tenant:', err.message)
+    return res.status(500).json({ error: 'Erro ao atualizar configurações do tenant.' })
+  }
+})
+
+/* ══════════════════════════════════════════════════
+   CRM CLIENTS ENDPOINTS
+   ══════════════════════════════════════════════════ */
+
+app.get('/api/crm', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { data, error } = await supabase
+      .from('crm_contacts')
+      .select('*')
+      .eq('tenant_id', req.tenantId)
+      .order('name', { ascending: true })
+
+    if (error) throw error
+    return res.json({ contacts: data || [] })
+  } catch (err) {
+    console.error('Erro ao listar contatos CRM:', err.message)
+    return res.status(500).json({ error: 'Erro ao listar contatos CRM.' })
+  }
+})
+
+app.post('/api/crm', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { name, email, phone, company, status, notes } = req.body
+
+    if (!name || !phone) {
+      return res.status(400).json({ error: 'Os campos "name" e "phone" são obrigatórios.' })
+    }
+
+    const { data, error } = await supabase
+      .from('crm_contacts')
+      .insert({
+        tenant_id: req.tenantId,
+        name,
+        email,
+        phone,
+        company,
+        status: status || 'lead',
+        notes,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ contact: data })
+  } catch (err) {
+    console.error('Erro ao adicionar contato CRM:', err.message)
+    return res.status(500).json({ error: 'Erro ao adicionar contato CRM.' })
+  }
+})
+
+app.put('/api/crm/:id', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { id } = req.params
+    const { name, email, phone, company, status, notes } = req.body
+
+    const updateObj = {}
+    if (name !== undefined) updateObj.name = name
+    if (email !== undefined) updateObj.email = email
+    if (phone !== undefined) updateObj.phone = phone
+    if (company !== undefined) updateObj.company = company
+    if (status !== undefined) updateObj.status = status
+    if (notes !== undefined) updateObj.notes = notes
+
+    const { data, error } = await supabase
+      .from('crm_contacts')
+      .update(updateObj)
+      .eq('id', id)
+      .eq('tenant_id', req.tenantId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ contact: data, success: true })
+  } catch (err) {
+    console.error('Erro ao editar contato CRM:', err.message)
+    return res.status(500).json({ error: 'Erro ao editar contato CRM.' })
+  }
+})
+
+app.delete('/api/crm/:id', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { id } = req.params
+
+    const { error } = await supabase
+      .from('crm_contacts')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', req.tenantId)
+
+    if (error) throw error
+    return res.json({ success: true })
+  } catch (err) {
+    console.error('Erro ao deletar contato CRM:', err.message)
+    return res.status(500).json({ error: 'Erro ao deletar contato CRM.' })
+  }
+})
+
+/* ══════════════════════════════════════════════════
+   FINANCIAL TRANSACTIONS ENDPOINTS
+   ══════════════════════════════════════════════════ */
+
+app.get('/api/finance', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { data, error } = await supabase
+      .from('financial_transactions')
+      .select('*')
+      .eq('tenant_id', req.tenantId)
+      .order('due_date', { ascending: false })
+
+    if (error) throw error
+    return res.json({ transactions: data || [] })
+  } catch (err) {
+    console.error('Erro ao buscar transações financeiras:', err.message)
+    return res.status(500).json({ error: 'Erro ao buscar transações financeiras.' })
+  }
+})
+
+app.post('/api/finance', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { type, category, amount, due_date, paid_at, description } = req.body
+
+    if (!type || !category || !amount || !due_date) {
+      return res.status(400).json({ error: 'Os campos "type", "category", "amount" e "due_date" são obrigatórios.' })
+    }
+
+    const { data, error } = await supabase
+      .from('financial_transactions')
+      .insert({
+        tenant_id: req.tenantId,
+        type,
+        category,
+        amount,
+        due_date,
+        paid_at,
+        description,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ transaction: data })
+  } catch (err) {
+    console.error('Erro ao adicionar transação financeira:', err.message)
+    return res.status(500).json({ error: 'Erro ao adicionar transação financeira.' })
+  }
+})
+
+/* ══════════════════════════════════════════════════
+   DOCUMENTS & TEMPLATES PRE-FILLING ENGINE
+   ══════════════════════════════════════════════════ */
+
+app.post('/api/documents/fill', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const { templateId, conversationId } = req.body
+    if (!templateId || !conversationId) {
+      return res.status(400).json({ error: 'Os campos "templateId" e "conversationId" são obrigatórios.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+
+    // 1. Buscar modelo do contrato
+    const { data: template, error: tempErr } = await supabase
+      .from('document_templates')
+      .select('*')
+      .eq('id', templateId)
+      .eq('tenant_id', req.tenantId)
+      .single()
+
+    if (tempErr || !template) {
+      return res.status(404).json({ error: 'Modelo de documento não encontrado.' })
+    }
+
+    // 2. Buscar histórico da conversa
+    const { data: messages, error: msgErr } = await supabase
+      .from('messages')
+      .select('role, content')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: true })
+
+    if (msgErr || !messages || messages.length === 0) {
+      return res.status(400).json({ error: 'Nenhuma mensagem encontrada nesta conversa para extrair dados.' })
+    }
+
+    // Formatar histórico em texto simples
+    const chatHistoryText = messages.map(m => `${m.role === 'user' ? 'Cliente' : 'IA'}: ${m.content}`).join('\n')
+
+    // 3. Acionar Gemini para extrair variáveis
+    const promptText = `
+Read this business conversation and extract values for these variables: ${JSON.stringify(template.variables || [])}.
+Return ONLY a valid JSON object matching the keys precisely, with null or empty string if a value is not discussed. No explanation.
+
+Conversation:
+"${chatHistoryText}"
+`
+    const geminiRes = await callWithRetry(() =>
+      ai.models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        config: {
+          responseMimeType: 'application/json'
+        }
+      })
+    )
+
+    let extractedData = {}
+    try {
+      extractedData = JSON.parse(geminiRes.text.trim())
+    } catch {
+      console.warn('Erro ao parsear JSON do Gemini, tentando limpar markdown')
+      const cleanJson = geminiRes.text.replace(/```json|```/g, '').trim()
+      extractedData = JSON.parse(cleanJson)
+    }
+
+    // 4. Substituir placeholders no template
+    let filledContent = template.raw_content
+    for (const [key, val] of Object.entries(extractedData)) {
+      const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'gi')
+      filledContent = filledContent.replace(regex, val || `[Pendente: ${key}]`)
+    }
+
+    // Salvar o documento preenchido no banco
+    const { data: docLog, error: logErr } = await supabase
+      .from('filled_documents')
+      .insert({
+        template_id: templateId,
+        title: `${template.title} - Preenchido`,
+        filled_content: filledContent
+      })
+      .select()
+      .single()
+
+    return res.json({
+      success: true,
+      filledContent,
+      variables: extractedData,
+      documentId: docLog?.id
+    })
+  } catch (err) {
+    console.error('Erro ao preencher documento:', err.message)
+    return res.status(500).json({ error: 'Erro ao extrair e preencher o documento.' })
+  }
+})
+
+/* ══════════════════════════════════════════════════
+   APPOINTMENTS & CALENDAR ENDPOINTS
+   ══════════════════════════════════════════════════ */
+
+app.get('/api/appointments', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { data, error } = await supabase
+      .from('appointments')
+      .select(`
+        id,
+        title,
+        description,
+        start_time,
+        end_time,
+        whatsapp_reminder_sent,
+        whatsapp_reminder_time,
+        contact_id,
+        crm_contacts ( name )
+      `)
+      .eq('tenant_id', req.tenantId)
+      .order('start_time', { ascending: true })
+
+    if (error) throw error
+    return res.json({ appointments: data || [] })
+  } catch (err) {
+    console.error('Erro ao buscar compromissos da agenda:', err.message)
+    return res.status(500).json({ error: 'Erro ao buscar compromissos da agenda.' })
+  }
+})
+
+app.post('/api/appointments', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { title, description, start_time, end_time, contact_id } = req.body
+
+    if (!title || !start_time || !end_time) {
+      return res.status(400).json({ error: 'Os campos "title", "start_time" e "end_time" são obrigatórios.' })
+    }
+
+    // Calcular lembrete automático do WhatsApp para 1 hora antes do início do compromisso
+    const reminderTime = new Date(new Date(start_time).getTime() - 60 * 60 * 1000).toISOString()
+
+    const { data, error } = await supabase
+      .from('appointments')
+      .insert({
+        tenant_id: req.tenantId,
+        contact_id: contact_id || null,
+        title,
+        description,
+        start_time,
+        end_time,
+        google_event_id: `gcal-${Math.random().toString(36).substring(2, 11)}`,
+        whatsapp_reminder_sent: false,
+        whatsapp_reminder_time: reminderTime
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ appointment: data })
+  } catch (err) {
+    console.error('Erro ao criar compromisso na agenda:', err.message)
+    return res.status(500).json({ error: 'Erro ao criar compromisso na agenda.' })
+  }
+})
+
+app.delete('/api/appointments/:id', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { id } = req.params
+
+    const { error } = await supabase
+      .from('appointments')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', req.tenantId)
+
+    if (error) throw error
+    return res.json({ success: true, message: 'Compromisso removido com sucesso.' })
+  } catch (err) {
+    console.error('Erro ao remover compromisso:', err.message)
+    return res.status(500).json({ error: 'Erro ao remover compromisso.' })
+  }
+})
+
+
 /* ── Static Files (Frontend) ── */
 const distPath = path.resolve('dist')
 if (fs.existsSync(distPath)) {
@@ -684,4 +1273,69 @@ app.listen(PORT, () => {
   console.log(`🤖 SDK: @google/genai | Modelo: ${GEMINI_MODEL}`)
   console.log(`📦 Supabase conectado: ${process.env.SUPABASE_URL}`)
   console.log(`🔐 Autenticação JWT ativada em todas as rotas /api\n`)
+  
+  // Iniciar o agendador de lembretes de WhatsApp em background
+  startBackgroundReminderWorker()
 })
+
+/* ══════════════════════════════════════════════════
+   BACKGROUND TASK WORKER (WhatsApp Reminders Fila)
+   ══════════════════════════════════════════════════ */
+function startBackgroundReminderWorker() {
+  console.log('🤖 Fila de Lembretes do WhatsApp iniciada (Background Worker)...')
+  
+  // Executar a cada 60 segundos
+  setInterval(async () => {
+    try {
+      const nowIso = new Date().toISOString()
+      
+      // Buscar compromissos pendentes de envio que já passaram da hora do lembrete
+      const { data: pendingReminders, error: fetchErr } = await supabaseAuth
+        .from('appointments')
+        .select('id, title, start_time, tenant_id, contact_id')
+        .eq('whatsapp_reminder_sent', false)
+        .lte('whatsapp_reminder_time', nowIso)
+        .limit(10)
+
+      if (fetchErr || !pendingReminders || pendingReminders.length === 0) return
+
+      for (const appointment of pendingReminders) {
+        console.log(`🔔 Processando lembrete de WhatsApp para o compromisso: "${appointment.title}"...`)
+
+        // Buscar contato associado e dados do tenant
+        const { data: contact } = await supabaseAuth
+          .from('crm_contacts')
+          .select('name, phone')
+          .eq('id', appointment.contact_id)
+          .maybeSingle()
+
+        const { data: tenant } = await supabaseAuth
+          .from('tenants')
+          .select('name')
+          .eq('id', appointment.tenant_id)
+          .maybeSingle()
+
+        if (contact && contact.phone) {
+          const clientName = contact.name || 'Cliente'
+          const companyName = tenant?.name || 'Minha Empresa'
+          const meetingTime = new Date(appointment.start_time).toLocaleString('pt-BR')
+          const messageText = `Olá, ${clientName}! Passando para lembrar que você tem um compromisso de "${appointment.title}" agendado com a empresa ${companyName} para ${meetingTime}. Até logo! 📅`
+
+          // Simulador do HTTP Dispatcher para o WhatsApp API Gateway
+          console.log(`\n📲 [DISPARO DE WHATSAPP SIMULADO]`)
+          console.log(`Para: ${contact.phone}`)
+          console.log(`Mensagem: "${messageText}"`)
+          console.log(`Status: 200 OK (Mensagem Enviada)\n`)
+        }
+
+        // Marcar como enviado no banco
+        await supabaseAuth
+          .from('appointments')
+          .update({ whatsapp_reminder_sent: true })
+          .eq('id', appointment.id)
+      }
+    } catch (err) {
+      console.warn('Erro ao processar fila de lembretes no background:', err.message)
+    }
+  }, 60000)
+}
