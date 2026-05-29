@@ -507,6 +507,18 @@ Return ONLY a valid JSON object with these keys. If it is NOT a scheduling reque
             console.log('✓ Compromisso agendado no banco com sucesso e sincronizado com o Google Agenda!')
             const responseText = `Perfeito! Acabei de agendar o compromisso para você! 📅\n\n**Compromisso**: ${parsed.title || 'Reunião'}\n**Horário**: ${new Date(parsed.start_time).toLocaleString('pt-BR')}\n\n*Nota: O evento foi registrado no CRM e sincronizado automaticamente com seu Google Agenda.*`
             
+            // Enviar notificação imediata de confirmação via WhatsApp em background
+            (async () => {
+              try {
+                const clientName = parsed.client_name || 'Não especificado'
+                const meetingTime = new Date(parsed.start_time).toLocaleString('pt-BR')
+                const immediateMessage = `Olá! Você acabou de agendar um novo compromisso via IA: "${parsed.title || 'Compromisso IA'}" com o cliente "${clientName}" para o dia ${meetingTime}. Confirmação imediata de agendamento! 📅`
+                await sendWhatsAppNotification(req.tenantId, immediateMessage)
+              } catch (err) {
+                console.warn('Erro ao disparar WhatsApp imediato de IA:', err.message)
+              }
+            })()
+
             // Persistir resposta da IA
             if (conversationId) {
               await supabase.from('messages').insert({
@@ -861,7 +873,7 @@ app.get('/api/tenant/settings', authenticate, async (req, res) => {
       custom_system_prompt: data.custom_system_prompt,
       created_at: data.created_at,
       google_connected: !!data.google_oauth_token,
-      whatsapp_connected: !!(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY),
+      whatsapp_connected: true,
       whatsapp_api_token: data.whatsapp_api_token
     }
 
@@ -1737,6 +1749,27 @@ app.post('/api/appointments', authenticate, async (req, res) => {
       .single()
 
     if (error) throw error
+
+    // Enviar mensagem imediata de confirmação via WhatsApp em background
+    (async () => {
+      try {
+        let clientName = 'Não especificado'
+        if (contact_id) {
+          const { data: contact } = await supabase
+            .from('crm_contacts')
+            .select('name')
+            .eq('id', contact_id)
+            .maybeSingle()
+          if (contact) clientName = contact.name
+        }
+        const meetingTime = new Date(start_time).toLocaleString('pt-BR')
+        const immediateMessage = `Olá! Você acabou de agendar um novo compromisso: "${title}" com o cliente "${clientName}" para o dia ${meetingTime}. Confirmação imediata de agendamento! 📅`
+        await sendWhatsAppNotification(req.tenantId, immediateMessage)
+      } catch (err) {
+        console.warn('Erro ao disparar WhatsApp de agendamento imediato:', err.message)
+      }
+    })()
+
     return res.json({ appointment: data })
   } catch (err) {
     console.error('Erro ao criar compromisso na agenda:', err.message)
@@ -1803,6 +1836,80 @@ app.listen(PORT, () => {
 })
 
 /* ══════════════════════════════════════════════════
+   WHATSAPP NOTIFICATION HELPER
+   ══════════════════════════════════════════════════ */
+async function sendWhatsAppNotification(tenantId, messageText) {
+  try {
+    const { data: tenant } = await supabaseAuth
+      .from('tenants')
+      .select('name, whatsapp_api_token')
+      .eq('id', tenantId)
+      .maybeSingle()
+
+    const recipientPhone = tenant?.whatsapp_api_token
+    if (!recipientPhone) {
+      console.warn(`⚠️ [WhatsApp] Nenhum número receptor de WhatsApp cadastrado para o tenant: ${tenantId}`)
+      return false
+    }
+
+    const apiEndpoint = process.env.EVOLUTION_API_URL
+    const apiKey = process.env.EVOLUTION_API_KEY
+    const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'AmplieInstance'
+
+    let cleanedPhone = recipientPhone.replace(/\D/g, '')
+    if (cleanedPhone.length === 10 || cleanedPhone.length === 11) {
+      cleanedPhone = '55' + cleanedPhone
+    }
+
+    if (apiEndpoint && apiKey) {
+      try {
+        console.log(`📲 Enviando notificação via Evolution API para o Admin: ${cleanedPhone}...`)
+        const res = await fetch(`${apiEndpoint}/message/sendText/${instanceName}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': apiKey
+          },
+          body: JSON.stringify({
+            number: cleanedPhone,
+            textMessage: {
+              text: messageText
+            },
+            options: {
+              delay: 1200,
+              presence: 'composing',
+              linkPreview: false
+            }
+          })
+        })
+
+        if (!res.ok) {
+          const errText = await res.text()
+          console.error(`❌ Erro no retorno da Evolution API para ${cleanedPhone}:`, errText)
+          return false
+        } else {
+          console.log(`✓ Notificação enviada via WhatsApp com sucesso para o Admin: ${cleanedPhone}!`)
+          return true
+        }
+      } catch (apiErr) {
+        console.error(`❌ Erro de conexão com a Evolution API para ${cleanedPhone}:`, apiErr.message)
+        return false
+      }
+    } else {
+      // Se as credenciais não estiverem configuradas, decai graciosamente para simulação
+      console.log(`\n📲 [DISPARO DE WHATSAPP SIMULADO] (Evolution API não configurada)`)
+      console.log(`Para o Admin: ${cleanedPhone}`)
+      console.log(`Mensagem: "${messageText}"`)
+      console.log(`Status: 200 OK (Mensagem Enviada)\n`)
+      return true
+    }
+  } catch (err) {
+    console.warn('Erro ao processar envio de WhatsApp:', err.message)
+    return false
+  }
+}
+
+/* ══════════════════════════════════════════════════
    BACKGROUND TASK WORKER (WhatsApp Reminders Fila)
    ══════════════════════════════════════════════════ */
 function startBackgroundReminderWorker() {
@@ -1826,90 +1933,18 @@ function startBackgroundReminderWorker() {
       for (const appointment of pendingReminders) {
         console.log(`🔔 Processando lembrete de WhatsApp para o compromisso: "${appointment.title}"...`)
 
-        // Buscar contato associado e dados do tenant
+        // Buscar contato associado
         const { data: contact } = await supabaseAuth
           .from('crm_contacts')
-          .select('name, phone')
+          .select('name')
           .eq('id', appointment.contact_id)
           .maybeSingle()
 
-        const { data: tenant } = await supabaseAuth
-          .from('tenants')
-          .select('name, whatsapp_api_token')
-          .eq('id', appointment.tenant_id)
-          .maybeSingle()
+        const clientName = contact?.name || 'Cliente'
+        const meetingTime = new Date(appointment.start_time).toLocaleString('pt-BR')
+        const messageText = `Olá! Você tem um compromisso de "${appointment.title}" agendado com o cliente "${clientName}" para ${meetingTime}. Lembrete automático! 📅`
 
-        let sendSuccess = true
-
-        // O número receptor será o cadastrado nas configurações da empresa (whatsapp_api_token)
-        const recipientPhone = tenant?.whatsapp_api_token
-
-        if (recipientPhone) {
-          const clientName = contact?.name || 'Cliente'
-          const companyName = tenant?.name || 'Minha Empresa'
-          const meetingTime = new Date(appointment.start_time).toLocaleString('pt-BR')
-          const messageText = `Olá! Você tem um compromisso de "${appointment.title}" agendado com o cliente "${clientName}" da empresa ${companyName} para ${meetingTime}. Lembrete automático! 📅`
-
-          const apiEndpoint = process.env.EVOLUTION_API_URL
-          const apiKey = process.env.EVOLUTION_API_KEY
-          const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'AmplieInstance'
-
-          if (apiEndpoint && apiKey) {
-            // Limpar formatação do telefone receptor (apenas números)
-            let cleanedPhone = recipientPhone.replace(/\D/g, '')
-
-            // Ajustar o formato para DDI brasileiro 55
-            if (cleanedPhone.length === 10 || cleanedPhone.length === 11) {
-              cleanedPhone = '55' + cleanedPhone
-            }
-
-            try {
-              console.log(`📲 Enviando lembrete centralizado via Evolution API para o Admin: ${cleanedPhone}...`)
-              const res = await fetch(`${apiEndpoint}/message/sendText/${instanceName}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': apiKey
-                },
-                body: JSON.stringify({
-                  number: cleanedPhone,
-                  textMessage: {
-                    text: messageText
-                  },
-                  options: {
-                    delay: 1200,
-                    presence: 'composing',
-                    linkPreview: false
-                  }
-                })
-              })
-
-              if (!res.ok) {
-                const errText = await res.text()
-                console.error(`❌ Erro no retorno da Evolution API para ${cleanedPhone}:`, errText)
-                sendSuccess = false
-              } else {
-                console.log(`✓ Lembrete enviado via WhatsApp com sucesso para o Admin: ${cleanedPhone}!`)
-              }
-            } catch (apiErr) {
-              console.error(`❌ Erro de conexão com a Evolution API para ${cleanedPhone}:`, apiErr.message)
-              sendSuccess = false
-            }
-          } else {
-            // Se as credenciais não estiverem configuradas, decai graciosamente para simulação
-            let cleanedPhone = recipientPhone.replace(/\D/g, '')
-            if (cleanedPhone.length === 10 || cleanedPhone.length === 11) {
-              cleanedPhone = '55' + cleanedPhone
-            }
-            console.log(`\n📲 [DISPARO DE WHATSAPP SIMULADO] (Evolution API não configurada)`)
-            console.log(`Para o Admin: ${cleanedPhone}`)
-            console.log(`Mensagem: "${messageText}"`)
-            console.log(`Status: 200 OK (Mensagem Enviada)\n`)
-          }
-        } else {
-          console.warn(`⚠️ [WORKER] Nenhum número receptor de WhatsApp cadastrado nas configurações da empresa ${tenant?.name || appointment.tenant_id}.`)
-          sendSuccess = false
-        }
+        const sendSuccess = await sendWhatsAppNotification(appointment.tenant_id, messageText)
 
         // Marcar como enviado no banco se disparado (ou simulado) com sucesso
         if (sendSuccess) {

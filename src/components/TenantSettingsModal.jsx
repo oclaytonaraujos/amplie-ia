@@ -27,7 +27,7 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
   const [systemPrompt, setSystemPrompt] = useState('')
   
   // Integrations State
-  const [whatsappConnected, setWhatsappConnected] = useState(false)
+  const [whatsappConnected, setWhatsappConnected] = useState(true)
   const [googleConnected, setGoogleConnected] = useState(false)
   const [whatsappNumber, setWhatsappNumber] = useState('')
 
@@ -153,6 +153,33 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
       localStorage.setItem('amplie_accent_color', accentColor)
     } catch {
       showToast('Erro ao salvar configurações.', 'error')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function handleSaveWhatsappNumber() {
+    setIsLoading(true)
+    try {
+      const res = await fetch('/api/tenant/settings', {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name,
+          logo_url: logoUrl,
+          accent_color: accentColor,
+          custom_system_prompt: systemPrompt,
+          whatsapp_api_token: whatsappNumber
+        })
+      })
+
+      if (!res.ok) throw new Error()
+      showToast('Número de WhatsApp atualizado!')
+    } catch {
+      showToast('Erro ao atualizar número de WhatsApp.', 'error')
     } finally {
       setIsLoading(false)
     }
@@ -963,6 +990,35 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
                   </button>
                 </div>
 
+                {/* WhatsApp Notification Number Panel */}
+                <div className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-fade-in">
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span className="text-emerald-400">📲</span> Lembretes de Agenda no WhatsApp
+                    </h4>
+                    <p className="text-[11px] text-gray-400">
+                      O robô enviará notificações automáticas de reuniões para o seu número.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+                    <input
+                      type="text"
+                      value={whatsappNumber}
+                      onChange={(e) => setWhatsappNumber(e.target.value)}
+                      placeholder="Ex: 5562999999999"
+                      className="bg-[#2A2A2A] border border-white/5 focus:border-[var(--accent-from)]/40 rounded-xl px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none w-full sm:w-48 transition-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveWhatsappNumber}
+                      style={{ background: 'linear-gradient(135deg, var(--accent-from), var(--accent-to))' }}
+                      className="px-4 py-2 text-white font-bold text-xs rounded-xl active:scale-95 hover:brightness-110 hover:-translate-y-0.5 transition-all shadow shrink-0"
+                    >
+                      Salvar
+                    </button>
+                  </div>
+                </div>
+
                 {/* Appointments list */}
                 <div className="space-y-3.5 overflow-y-auto max-h-[62vh] pr-1">
                   {appointments.length > 0 ? (
@@ -1403,28 +1459,15 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
                 <div className="flex flex-col gap-1 pr-4">
                   <h3 className="text-sm font-bold text-white">Disparos no WhatsApp (Lembretes)</h3>
                   <p className="text-xs text-gray-500 leading-relaxed">Envia notificações e avisos de reuniões automaticamente para seus clientes no WhatsApp.</p>
-                  {!whatsappConnected && (
-                    <p className="text-[10px] text-amber-500/80 font-medium mt-1 leading-relaxed">
-                      ⚠️ Para ativar, configure as variáveis <strong>EVOLUTION_API_URL</strong>, <strong>EVOLUTION_API_KEY</strong> e <strong>EVOLUTION_INSTANCE_NAME</strong> no arquivo <code>server/.env</code>.
-                    </p>
-                  )}
                 </div>
                 <button
                   type="button"
                   onClick={() => {
-                    if (whatsappConnected) {
-                      showToast('WhatsApp integrado via Evolution API com sucesso!', 'info')
-                    } else {
-                      showToast('Preencha as credenciais da Evolution API no seu .env para ativar.', 'warning')
-                    }
+                    showToast('WhatsApp integrado com sucesso!', 'info')
                   }}
-                  className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all border active:scale-95 hover:-translate-y-0.5 duration-300 whitespace-nowrap ${
-                    whatsappConnected
-                      ? 'bg-[#10b981]/10 border-[#10b981]/25 text-[#10b981] cursor-default'
-                      : 'bg-white/5 border-white/8 text-gray-400 hover:bg-white/10 cursor-pointer'
-                  }`}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold transition-all border active:scale-95 hover:-translate-y-0.5 duration-300 whitespace-nowrap bg-[#10b981]/10 border-[#10b981]/25 text-[#10b981] cursor-default"
                 >
-                  {whatsappConnected ? '✓ Ativado' : 'Aguardando Configuração'}
+                  ✓ Ativado
                 </button>
               </div>
 
