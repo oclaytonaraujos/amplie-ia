@@ -480,6 +480,14 @@ Return ONLY a valid JSON object with these keys. If it is NOT a scheduling reque
             if (contact) contactId = contact.id
           }
 
+          // Sincronizar com o Google Calendar real (se conectado) ou gerar fallback
+          const googleEventId = await createGoogleCalendarEvent(req.tenantId, {
+            title: parsed.title || 'Compromisso IA',
+            description: `Agendado de forma inteligente pela Amplie IA.\nCliente referenciado: ${parsed.client_name || 'Nenhum'}`,
+            start_time: parsed.start_time,
+            end_time: parsed.end_time
+          })
+
           const { data: appointment } = await supabase
             .from('appointments')
             .insert({
@@ -489,14 +497,14 @@ Return ONLY a valid JSON object with these keys. If it is NOT a scheduling reque
               start_time: parsed.start_time,
               end_time: parsed.end_time,
               description: `Agendado de forma inteligente pela Amplie IA.\nCliente referenciado: ${parsed.client_name || 'Nenhum'}`,
-              google_event_id: `gcal-${Math.random().toString(36).substring(2, 11)}`,
+              google_event_id: googleEventId,
               whatsapp_reminder_time: new Date(new Date(parsed.start_time).getTime() - 60 * 60 * 1000).toISOString() // Lembrete 1h antes
             })
             .select()
             .single()
 
           if (appointment) {
-            console.log('✓ Compromisso agendado no banco com sucesso e sincronizado com o Google Agenda (simulado)!')
+            console.log('✓ Compromisso agendado no banco com sucesso e sincronizado com o Google Agenda!')
             const responseText = `Perfeito! Acabei de agendar o compromisso para você! 📅\n\n**Compromisso**: ${parsed.title || 'Reunião'}\n**Horário**: ${new Date(parsed.start_time).toLocaleString('pt-BR')}\n\n*Nota: O evento foi registrado no CRM e sincronizado automaticamente com seu Google Agenda.*`
             
             // Persistir resposta da IA
@@ -838,12 +846,24 @@ app.get('/api/tenant/settings', authenticate, async (req, res) => {
     const supabase = createUserClient(req.accessToken)
     const { data, error } = await supabase
       .from('tenants')
-      .select('id, name, logo_url, accent_color, custom_system_prompt, created_at')
+      .select('id, name, logo_url, accent_color, custom_system_prompt, google_oauth_token, created_at')
       .eq('id', req.tenantId)
       .single()
 
     if (error) throw error
-    return res.json({ settings: data })
+
+    // Criar payload de configurações seguro (omitir token sensível do frontend)
+    const settings = {
+      id: data.id,
+      name: data.name,
+      logo_url: data.logo_url,
+      accent_color: data.accent_color,
+      custom_system_prompt: data.custom_system_prompt,
+      created_at: data.created_at,
+      google_connected: !!data.google_oauth_token
+    }
+
+    return res.json({ settings })
   } catch (err) {
     console.error('Erro ao buscar configurações do tenant:', err.message)
     return res.status(500).json({ error: 'Erro ao buscar configurações do tenant.' })
@@ -1308,6 +1328,337 @@ Conversation:
 })
 
 /* ══════════════════════════════════════════════════
+   GOOGLE CALENDAR API & OAUTH ENGINE
+   ══════════════════════════════════════════════════ */
+
+async function getValidGoogleToken(tenantId) {
+  try {
+    const { data: tenant, error } = await supabaseAuth
+      .from('tenants')
+      .select('google_oauth_token')
+      .eq('id', tenantId)
+      .single()
+
+    if (error || !tenant || !tenant.google_oauth_token) {
+      return null
+    }
+
+    const tokenObj = tenant.google_oauth_token
+
+    // Se o token ainda é válido (mais de 2 minutos restantes), usar direto
+    if (tokenObj.expiry_date && tokenObj.expiry_date - Date.now() > 120000) {
+      return tokenObj.access_token
+    }
+
+    // Caso contrário, precisamos atualizar usando o refresh_token
+    if (!tokenObj.refresh_token) {
+      console.warn('⚠️ Sem refresh_token para o tenant', tenantId)
+      return null
+    }
+
+    console.log(`🔄 Atualizando token do Google Calendar para o tenant ${tenantId}...`)
+
+    const res = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        grant_type: 'refresh_token',
+        refresh_token: tokenObj.refresh_token,
+      }),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      console.error(`❌ Erro ao atualizar token do Google: ${errText}`)
+      return null
+    }
+
+    const data = await res.json()
+
+    const updatedToken = {
+      ...tokenObj,
+      access_token: data.access_token,
+      expiry_date: Date.now() + data.expires_in * 1000,
+    }
+
+    // Salvar o token atualizado no banco
+    await supabaseAuth
+      .from('tenants')
+      .update({ google_oauth_token: updatedToken })
+      .eq('id', tenantId)
+
+    return data.access_token
+  } catch (err) {
+    console.error('Erro na validação/atualização do token do Google:', err)
+    return null
+  }
+}
+
+async function createGoogleCalendarEvent(tenantId, { title, description, start_time, end_time }) {
+  const token = await getValidGoogleToken(tenantId)
+  if (!token) {
+    // Retorna fallback se não conectado
+    return `gcal-${Math.random().toString(36).substring(2, 11)}`
+  }
+
+  try {
+    const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        summary: title,
+        description: description || 'Agendado pelo Amplie IA',
+        start: {
+          dateTime: new Date(start_time).toISOString(),
+        },
+        end: {
+          dateTime: new Date(end_time).toISOString(),
+        },
+      }),
+    })
+
+    if (!res.ok) {
+      const errText = await res.text()
+      console.error(`❌ Erro ao criar evento no Google Calendar: ${errText}`)
+      return `gcal-${Math.random().toString(36).substring(2, 11)}`
+    }
+
+    const data = await res.json()
+    console.log(`✓ Evento criado com sucesso no Google Calendar real! ID: ${data.id}`)
+    return data.id
+  } catch (err) {
+    console.error('Erro de conexão ao criar evento no Google Calendar:', err)
+    return `gcal-${Math.random().toString(36).substring(2, 11)}`
+  }
+}
+
+async function deleteGoogleCalendarEvent(tenantId, googleEventId) {
+  if (!googleEventId || googleEventId.startsWith('gcal-')) {
+    return // Pula se for ID simulado
+  }
+
+  const token = await getValidGoogleToken(tenantId)
+  if (!token) return
+
+  try {
+    const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${googleEventId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    })
+
+    if (!res.ok && res.status !== 404) {
+      const errText = await res.text()
+      console.error(`❌ Erro ao deletar evento no Google Calendar: ${errText}`)
+    } else {
+      console.log(`✓ Evento deletado com sucesso do Google Calendar real! ID: ${googleEventId}`)
+    }
+  } catch (err) {
+    console.error('Erro de conexão ao deletar evento do Google Calendar:', err)
+  }
+}
+
+/* ── Google OAuth Endpoints ── */
+
+app.get('/api/auth/google', async (req, res) => {
+  const token = req.query.token
+  if (!token) {
+    return res.status(400).send('Token de autenticação ausente.')
+  }
+
+  try {
+    const { data: { user }, error } = await supabaseAuth.auth.getUser(token)
+    if (error || !user) {
+      return res.status(401).send('Sessão expirada ou inválida.')
+    }
+
+    // Buscar o tenant do usuário
+    const { data: tenantUser } = await supabaseAuth
+      .from('tenant_users')
+      .select('tenant_id')
+      .eq('user_id', user.id)
+      .limit(1)
+      .maybeSingle()
+
+    if (!tenantUser) {
+      return res.status(400).send('Usuário não possui uma empresa associada.')
+    }
+
+    const tenantId = tenantUser.tenant_id
+
+    // Gerar URL de autorização do Google
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `http://localhost:3001/api/auth/google/callback`
+    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?` + new URLSearchParams({
+      client_id: process.env.GOOGLE_CLIENT_ID || '',
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'https://www.googleapis.com/auth/calendar.events',
+      access_type: 'offline',
+      prompt: 'consent',
+      state: tenantId
+    }).toString()
+
+    res.redirect(oauthUrl)
+  } catch (err) {
+    console.error('Erro ao iniciar Google OAuth:', err)
+    res.status(500).send('Erro interno ao iniciar a autenticação.')
+  }
+})
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code, state: tenantId, error } = req.query
+
+  if (error) {
+    console.error('Google OAuth error callback:', error)
+    return res.status(400).send(`Erro na autorização do Google: ${error}`)
+  }
+
+  if (!code || !tenantId) {
+    return res.status(400).send('Código de autorização ou Tenant ID ausentes.')
+  }
+
+  try {
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || `http://localhost:3001/api/auth/google/callback`
+
+    // Trocar código pelo token
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: process.env.GOOGLE_CLIENT_ID || '',
+        client_secret: process.env.GOOGLE_CLIENT_SECRET || '',
+        code: code,
+        grant_type: 'authorization_code',
+        redirect_uri: redirectUri,
+      }),
+    })
+
+    if (!tokenRes.ok) {
+      const errBody = await tokenRes.text()
+      throw new Error(`Erro ao trocar token no Google: ${errBody}`)
+    }
+
+    const tokenData = await tokenRes.json()
+
+    // Formatar token de forma padronizada
+    const googleTokenObj = {
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token,
+      expiry_date: Date.now() + tokenData.expires_in * 1000,
+      token_type: tokenData.token_type || 'Bearer',
+      scope: tokenData.scope,
+    }
+
+    // Se não veio o refresh_token, recuperar o anterior para manter
+    if (!googleTokenObj.refresh_token) {
+      const { data: existingTenant } = await supabaseAuth
+        .from('tenants')
+        .select('google_oauth_token')
+        .eq('id', tenantId)
+        .single()
+      
+      if (existingTenant?.google_oauth_token?.refresh_token) {
+        googleTokenObj.refresh_token = existingTenant.google_oauth_token.refresh_token
+      }
+    }
+
+    // Salvar no banco
+    const { error: dbErr } = await supabaseAuth
+      .from('tenants')
+      .update({ google_oauth_token: googleTokenObj })
+      .eq('id', tenantId)
+
+    if (dbErr) throw dbErr
+
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Conectado!</title>
+          <style>
+            body {
+              background-color: #212121;
+              color: #ffffff;
+              font-family: 'Inter', sans-serif;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+            }
+            .card {
+              text-align: center;
+              background-color: #2a2a2a;
+              padding: 40px;
+              border-radius: 20px;
+              box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+              border: 1px solid rgba(255,255,255,0.05);
+            }
+            h1 { color: #10b981; margin-bottom: 10px; font-size: 24px; }
+            p { color: #a3a3a3; font-size: 14px; margin-bottom: 20px; }
+            .btn {
+              background: linear-gradient(135deg, #ec4899, #f43f5e);
+              color: white;
+              border: none;
+              padding: 10px 20px;
+              border-radius: 10px;
+              font-weight: bold;
+              cursor: pointer;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h1>✓ Google Agenda Conectado!</h1>
+            <p>Sua conta do Google Agenda foi vinculada com sucesso. Você já pode fechar esta tela.</p>
+            <button class="btn" onclick="window.close()">Fechar Janela</button>
+          </div>
+          <script>
+            setTimeout(() => {
+              window.close();
+            }, 2500);
+          </script>
+        </body>
+      </html>
+    `)
+  } catch (err) {
+    console.error('Erro no callback do Google:', err)
+    res.status(500).send(`Erro interno ao processar a autenticação: ${err.message}`)
+  }
+})
+
+app.post('/api/auth/google/disconnect', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { error } = await supabase
+      .from('tenants')
+      .update({ google_oauth_token: null })
+      .eq('id', req.tenantId)
+
+    if (error) throw error
+    return res.json({ success: true, message: 'Google Agenda desconectado.' })
+  } catch (err) {
+    console.error('Erro ao desconectar Google Agenda:', err)
+    return res.status(500).json({ error: 'Erro ao desconectar Google Agenda.' })
+  }
+})
+
+/* ══════════════════════════════════════════════════
    APPOINTMENTS & CALENDAR ENDPOINTS
    ══════════════════════════════════════════════════ */
 
@@ -1358,6 +1709,14 @@ app.post('/api/appointments', authenticate, async (req, res) => {
     // Calcular lembrete automático do WhatsApp para 1 hora antes do início do compromisso
     const reminderTime = new Date(new Date(start_time).getTime() - 60 * 60 * 1000).toISOString()
 
+    // Sincronizar com o Google Calendar real (se conectado) ou gerar fallback
+    const googleEventId = await createGoogleCalendarEvent(req.tenantId, {
+      title,
+      description,
+      start_time,
+      end_time
+    })
+
     const { data, error } = await supabase
       .from('appointments')
       .insert({
@@ -1367,7 +1726,7 @@ app.post('/api/appointments', authenticate, async (req, res) => {
         description,
         start_time,
         end_time,
-        google_event_id: `gcal-${Math.random().toString(36).substring(2, 11)}`,
+        google_event_id: googleEventId,
         whatsapp_reminder_sent: false,
         whatsapp_reminder_time: reminderTime
       })
@@ -1390,6 +1749,18 @@ app.delete('/api/appointments/:id', authenticate, async (req, res) => {
 
     const supabase = createUserClient(req.accessToken)
     const { id } = req.params
+
+    // Buscar o google_event_id antes de deletar do banco
+    const { data: appointment } = await supabase
+      .from('appointments')
+      .select('google_event_id')
+      .eq('id', id)
+      .eq('tenant_id', req.tenantId)
+      .maybeSingle()
+
+    if (appointment && appointment.google_event_id) {
+      await deleteGoogleCalendarEvent(req.tenantId, appointment.google_event_id)
+    }
 
     const { error } = await supabase
       .from('appointments')

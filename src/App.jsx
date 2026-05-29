@@ -954,14 +954,20 @@ function WelcomeScreen({ onSuggestion }) {
 function SidebarItem({ icon, text, onClick, collapsed, active, dangerAction }) {
   return (
     <div className="relative group px-[14px] mb-1">
+      {active && (
+        <div 
+          className="absolute left-0 top-2 bottom-2 w-1 rounded-r-md z-10 transition-all duration-300 animate-fade-in"
+          style={{ background: 'linear-gradient(to bottom, var(--accent-from), var(--accent-to))' }}
+        />
+      )}
       <button
         onClick={onClick}
         className={`
           w-full flex items-center rounded-lg h-11
-          transition-colors duration-200
+          transition-all duration-200
           ${active 
-            ? 'bg-white/10 text-white' 
-            : 'text-gray-300 hover:bg-white/5 hover:text-white'
+            ? 'bg-white/10 text-white font-semibold' 
+            : 'text-gray-400 hover:bg-white/5 hover:text-white'
           }
         `}
         aria-label={collapsed ? text : undefined}
@@ -1110,61 +1116,72 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
           <div className={`px-[22px] text-[10px] font-bold text-gray-500 uppercase tracking-wider whitespace-nowrap mb-2 truncate transition-opacity duration-300 ${collapsed ? 'opacity-0 h-0 overflow-hidden' : 'opacity-60'}`}>
             Empresa & Agente
           </div>
-          <SidebarItem 
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
-                <path fillRule="evenodd" d="M4 16.5v-13h12v13h-12ZM5.5 5v1.5h9V5h-9ZM5.5 8v1.5h9V8h-9ZM5.5 11v1.5h9V11h-9Z" clipRule="evenodd" />
-              </svg>
-            }
-            text="Minha Empresa"
-            onClick={() => onOpenTenantTab?.('brand')}
-            collapsed={collapsed}
-            active={activeView === 'tenant_brand'}
-          />
-          <SidebarItem 
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
-                <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7 9a7 7 0 1 1 14 0H3Z" />
-              </svg>
-            }
-            text="CRM Contatos"
-            onClick={() => onOpenTenantTab?.('crm')}
-            collapsed={collapsed}
-            active={activeView === 'tenant_crm'}
-          />
-          <SidebarItem 
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
-                <path fillRule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-2.25 7v6.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V9H3.5Zm0-1.5h13V6.75c0-.69-.56-1.25-1.25-1.25h-10.5c-.69 0-1.25.56-1.25 1.25V7.5Z" clipRule="evenodd" />
-              </svg>
-            }
-            text="Agenda Compromissos"
-            onClick={() => onOpenTenantTab?.('agenda')}
-            collapsed={collapsed}
-            active={activeView === 'tenant_agenda'}
-          />
-          <SidebarItem 
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
-                <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.379 2H4.5Zm6 1.5v3a1 1 0 0 0 1 1h3l-4-4Z" clipRule="evenodd" />
-              </svg>
-            }
-            text="Biblioteca Entregáveis"
-            onClick={() => onOpenTenantTab?.('documents')}
-            collapsed={collapsed}
-            active={activeView === 'tenant_documents'}
-          />
-          <SidebarItem 
-            icon={
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-pink-400">
-                <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v1.618c-.314.015-.626.044-.934.086a3.75 3.75 0 0 0-3.037 4.025 3.75 3.75 0 0 0 3.037 4.026c.308.041.62.07.934.085v1.618a.75.75 0 0 0 1.5 0v-1.618c.314-.015.626-.044.934-.086a3.75 3.75 0 0 0 3.037-4.025 3.75 3.75 0 0 0-3.037-4.026a7.126 7.126 0 0 0-.934-.085V2.75Zm-1.5 3.125v4.25a2.25 2.25 0 0 1-1.619-2.125A2.25 2.25 0 0 1 9.25 5.875Zm1.5 8.25v-4.25a2.25 2.25 0 0 1 1.619 2.125A2.25 2.25 0 0 1 10.75 14.125Z" />
-              </svg>
-            }
-            text="Gestão Financeira"
-            onClick={() => onOpenTenantTab?.('finance')}
-            collapsed={collapsed}
-            active={activeView === 'tenant_finance'}
-          />
+          {(() => {
+            const isBrandActive = activeView === 'tenant_brand' || activeView === 'tenant_agent' || activeView === 'tenant_integrations';
+            const isCrmActive = activeView === 'tenant_crm';
+            const isAgendaActive = activeView === 'tenant_agenda';
+            const isDocumentsActive = activeView === 'tenant_documents';
+            const isFinanceActive = activeView === 'tenant_finance';
+            return (
+              <>
+                <SidebarItem 
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 transition-colors" style={isBrandActive ? { color: 'var(--accent-from)' } : { color: '#9ca3af' }}>
+                      <path fillRule="evenodd" d="M4 16.5v-13h12v13h-12ZM5.5 5v1.5h9V5h-9ZM5.5 8v1.5h9V8h-9ZM5.5 11v1.5h9V11h-9Z" clipRule="evenodd" />
+                    </svg>
+                  }
+                  text="Minha Empresa"
+                  onClick={() => onOpenTenantTab?.('brand')}
+                  collapsed={collapsed}
+                  active={isBrandActive}
+                />
+                <SidebarItem 
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 transition-colors" style={isCrmActive ? { color: 'var(--accent-from)' } : { color: '#9ca3af' }}>
+                      <path d="M10 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm-7 9a7 7 0 1 1 14 0H3Z" />
+                    </svg>
+                  }
+                  text="CRM Contatos"
+                  onClick={() => onOpenTenantTab?.('crm')}
+                  collapsed={collapsed}
+                  active={isCrmActive}
+                />
+                <SidebarItem 
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 transition-colors" style={isAgendaActive ? { color: 'var(--accent-from)' } : { color: '#9ca3af' }}>
+                      <path fillRule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-2.25 7v6.25c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V9H3.5Zm0-1.5h13V6.75c0-.69-.56-1.25-1.25-1.25h-10.5c-.69 0-1.25.56-1.25 1.25V7.5Z" clipRule="evenodd" />
+                    </svg>
+                  }
+                  text="Agenda Compromissos"
+                  onClick={() => onOpenTenantTab?.('agenda')}
+                  collapsed={collapsed}
+                  active={isAgendaActive}
+                />
+                <SidebarItem 
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 transition-colors" style={isDocumentsActive ? { color: 'var(--accent-from)' } : { color: '#9ca3af' }}>
+                      <path fillRule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.379 2H4.5Zm6 1.5v3a1 1 0 0 0 1 1h3l-4-4Z" clipRule="evenodd" />
+                    </svg>
+                  }
+                  text="Biblioteca Entregáveis"
+                  onClick={() => onOpenTenantTab?.('documents')}
+                  collapsed={collapsed}
+                  active={isDocumentsActive}
+                />
+                <SidebarItem 
+                  icon={
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 transition-colors" style={isFinanceActive ? { color: 'var(--accent-from)' } : { color: '#9ca3af' }}>
+                      <path d="M10.75 2.75a.75.75 0 0 0-1.5 0v1.618c-.314.015-.626.044-.934.086a3.75 3.75 0 0 0-3.037 4.025 3.75 3.75 0 0 0 3.037 4.026c.308.041.62.07.934.085v1.618a.75.75 0 0 0 1.5 0v-1.618c.314-.015.626-.044.934-.086a3.75 3.75 0 0 0 3.037-4.025 3.75 3.75 0 0 0-3.037-4.026a7.126 7.126 0 0 0-.934-.085V2.75Zm-1.5 3.125v4.25a2.25 2.25 0 0 1-1.619-2.125A2.25 2.25 0 0 1 9.25 5.875Zm1.5 8.25v-4.25a2.25 2.25 0 0 1 1.619 2.125A2.25 2.25 0 0 1 10.75 14.125Z" />
+                    </svg>
+                  }
+                  text="Gestão Financeira"
+                  onClick={() => onOpenTenantTab?.('finance')}
+                  collapsed={collapsed}
+                  active={isFinanceActive}
+                />
+              </>
+            );
+          })()}
         </div>
 
         {/* Conversation List */}
@@ -1233,10 +1250,10 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
                 </button>
 
                 <button onClick={() => { setProfileMenuOpen(false); onOpenModal('tenant_settings') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-pink-400">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 transition-colors" style={{ color: 'var(--accent-from)' }}>
                     <path fillRule="evenodd" d="M4 16.5v-13h12v13h-12ZM5.5 5v1.5h9V5h-9ZM5.5 8v1.5h9V8h-9ZM5.5 11v1.5h9V11h-9Z" clipRule="evenodd" />
                   </svg>
-                  <span className="font-semibold text-pink-400">Minha Empresa</span>
+                  <span className="font-semibold transition-colors" style={{ color: 'var(--accent-from)' }}>Minha Empresa</span>
                 </button>
 
                 <button onClick={() => { setProfileMenuOpen(false); onOpenModal('settings') }} className="w-full flex items-center gap-3 px-3 py-2.5 text-sm text-gray-300 hover:bg-white/5 hover:text-white transition-colors">
