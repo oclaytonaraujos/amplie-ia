@@ -29,6 +29,7 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
   // Integrations State
   const [whatsappConnected, setWhatsappConnected] = useState(false)
   const [googleConnected, setGoogleConnected] = useState(false)
+  const [whatsappNumber, setWhatsappNumber] = useState('')
 
   // Document templates State
   const [templates, setTemplates] = useState([])
@@ -118,6 +119,8 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
         setAccentColor(data.settings.accent_color || 'pink')
         setSystemPrompt(data.settings.custom_system_prompt || '')
         setGoogleConnected(!!data.settings.google_connected)
+        setWhatsappConnected(!!data.settings.whatsapp_connected)
+        setWhatsappNumber(data.settings.whatsapp_api_token || '')
         
         const colorObj = companyAccentColors.find(c => c.id === data.settings.accent_color)
         if (colorObj) applyAccentColor(colorObj)
@@ -140,7 +143,8 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
           name,
           logo_url: logoUrl,
           accent_color: accentColor,
-          custom_system_prompt: systemPrompt
+          custom_system_prompt: systemPrompt,
+          whatsapp_api_token: whatsappNumber
         })
       })
 
@@ -1394,25 +1398,53 @@ export default function TenantSettingsModal({ onClose, session, initialTab, inli
             </div>
 
             {/* WhatsApp reminders */}
-            <div className="p-5 bg-[#2A2A2A]/40 border border-white/5 hover:border-white/10 rounded-2xl flex items-center justify-between transition-all duration-300">
-              <div className="flex flex-col gap-1 pr-4">
-                <h3 className="text-sm font-bold text-white">Disparos no WhatsApp (Lembretes)</h3>
-                <p className="text-xs text-gray-500 leading-relaxed">Envia notificações e avisos de reuniões automaticamente para seus clientes no WhatsApp.</p>
+            <div className="p-5 bg-[#2A2A2A]/40 border border-white/5 hover:border-white/10 rounded-2xl flex flex-col gap-4 transition-all duration-300">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex flex-col gap-1 pr-4">
+                  <h3 className="text-sm font-bold text-white">Disparos no WhatsApp (Lembretes)</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">Envia notificações e avisos de reuniões automaticamente para seus clientes no WhatsApp.</p>
+                  {!whatsappConnected && (
+                    <p className="text-[10px] text-amber-500/80 font-medium mt-1 leading-relaxed">
+                      ⚠️ Para ativar, configure as variáveis <strong>EVOLUTION_API_URL</strong>, <strong>EVOLUTION_API_KEY</strong> e <strong>EVOLUTION_INSTANCE_NAME</strong> no arquivo <code>server/.env</code>.
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (whatsappConnected) {
+                      showToast('WhatsApp integrado via Evolution API com sucesso!', 'info')
+                    } else {
+                      showToast('Preencha as credenciais da Evolution API no seu .env para ativar.', 'warning')
+                    }
+                  }}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all border active:scale-95 hover:-translate-y-0.5 duration-300 whitespace-nowrap ${
+                    whatsappConnected
+                      ? 'bg-[#10b981]/10 border-[#10b981]/25 text-[#10b981] cursor-default'
+                      : 'bg-white/5 border-white/8 text-gray-400 hover:bg-white/10 cursor-pointer'
+                  }`}
+                >
+                  {whatsappConnected ? '✓ Ativado' : 'Aguardando Configuração'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setWhatsappConnected(!whatsappConnected)
-                  showToast(whatsappConnected ? 'Lembretes de WhatsApp desativados.' : 'WhatsApp conectado! Lembretes ativos.')
-                }}
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all border active:scale-95 hover:-translate-y-0.5 duration-300 ${
-                  whatsappConnected
-                    ? 'bg-[#10b981]/10 border-[#10b981]/25 text-[#10b981]'
-                    : 'bg-white/5 border-white/8 text-gray-300 hover:bg-white/10'
-                }`}
-              >
-                {whatsappConnected ? '✓ Ativado' : 'Ativar Lembretes'}
-              </button>
+
+              {whatsappConnected && (
+                <div className="border-t border-white/5 pt-4 space-y-1.5 max-w-md animate-fade-in">
+                  <label className="text-[10.5px] font-bold text-gray-400 block tracking-wide uppercase">Seu WhatsApp Receptor de Notificações (DDI+DDD+Número):</label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={whatsappNumber}
+                      onChange={(e) => setWhatsappNumber(e.target.value)}
+                      placeholder="Ex: 5562999999999"
+                      className="w-full bg-[#2A2A2A] border border-white/5 focus:border-[var(--accent-from)]/40 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:outline-none transition-all duration-300"
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 italic leading-relaxed">
+                    *Todos os lembretes de compromissos da agenda serão disparados pelo robô diretamente para este número de WhatsApp cadastrado.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}

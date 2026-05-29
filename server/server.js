@@ -846,7 +846,7 @@ app.get('/api/tenant/settings', authenticate, async (req, res) => {
     const supabase = createUserClient(req.accessToken)
     const { data, error } = await supabase
       .from('tenants')
-      .select('id, name, logo_url, accent_color, custom_system_prompt, google_oauth_token, created_at')
+      .select('id, name, logo_url, accent_color, custom_system_prompt, google_oauth_token, whatsapp_api_token, created_at')
       .eq('id', req.tenantId)
       .single()
 
@@ -860,7 +860,9 @@ app.get('/api/tenant/settings', authenticate, async (req, res) => {
       accent_color: data.accent_color,
       custom_system_prompt: data.custom_system_prompt,
       created_at: data.created_at,
-      google_connected: !!data.google_oauth_token
+      google_connected: !!data.google_oauth_token,
+      whatsapp_connected: !!(process.env.EVOLUTION_API_URL && process.env.EVOLUTION_API_KEY),
+      whatsapp_api_token: data.whatsapp_api_token
     }
 
     return res.json({ settings })
@@ -877,13 +879,14 @@ app.put('/api/tenant/settings', authenticate, async (req, res) => {
     }
 
     const supabase = createUserClient(req.accessToken)
-    const { name, logo_url, accent_color, custom_system_prompt } = req.body
+    const { name, logo_url, accent_color, custom_system_prompt, whatsapp_api_token } = req.body
 
     const updateObj = {}
     if (name !== undefined) updateObj.name = name
     if (logo_url !== undefined) updateObj.logo_url = logo_url
     if (accent_color !== undefined) updateObj.accent_color = accent_color
     if (custom_system_prompt !== undefined) updateObj.custom_system_prompt = custom_system_prompt
+    if (whatsapp_api_token !== undefined) updateObj.whatsapp_api_token = whatsapp_api_token
 
     const { data, error } = await supabase
       .from('tenants')
@@ -1832,28 +1835,89 @@ function startBackgroundReminderWorker() {
 
         const { data: tenant } = await supabaseAuth
           .from('tenants')
-          .select('name')
+          .select('name, whatsapp_api_token')
           .eq('id', appointment.tenant_id)
           .maybeSingle()
 
-        if (contact && contact.phone) {
-          const clientName = contact.name || 'Cliente'
+        let sendSuccess = true
+
+        // O número receptor será o cadastrado nas configurações da empresa (whatsapp_api_token)
+        const recipientPhone = tenant?.whatsapp_api_token
+
+        if (recipientPhone) {
+          const clientName = contact?.name || 'Cliente'
           const companyName = tenant?.name || 'Minha Empresa'
           const meetingTime = new Date(appointment.start_time).toLocaleString('pt-BR')
-          const messageText = `Olá, ${clientName}! Passando para lembrar que você tem um compromisso de "${appointment.title}" agendado com a empresa ${companyName} para ${meetingTime}. Até logo! 📅`
+          const messageText = `Olá! Você tem um compromisso de "${appointment.title}" agendado com o cliente "${clientName}" da empresa ${companyName} para ${meetingTime}. Lembrete automático! 📅`
 
-          // Simulador do HTTP Dispatcher para o WhatsApp API Gateway
-          console.log(`\n📲 [DISPARO DE WHATSAPP SIMULADO]`)
-          console.log(`Para: ${contact.phone}`)
-          console.log(`Mensagem: "${messageText}"`)
-          console.log(`Status: 200 OK (Mensagem Enviada)\n`)
+          const apiEndpoint = process.env.EVOLUTION_API_URL
+          const apiKey = process.env.EVOLUTION_API_KEY
+          const instanceName = process.env.EVOLUTION_INSTANCE_NAME || 'AmplieInstance'
+
+          if (apiEndpoint && apiKey) {
+            // Limpar formatação do telefone receptor (apenas números)
+            let cleanedPhone = recipientPhone.replace(/\D/g, '')
+
+            // Ajustar o formato para DDI brasileiro 55
+            if (cleanedPhone.length === 10 || cleanedPhone.length === 11) {
+              cleanedPhone = '55' + cleanedPhone
+            }
+
+            try {
+              console.log(`📲 Enviando lembrete centralizado via Evolution API para o Admin: ${cleanedPhone}...`)
+              const res = await fetch(`${apiEndpoint}/message/sendText/${instanceName}`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': apiKey
+                },
+                body: JSON.stringify({
+                  number: cleanedPhone,
+                  textMessage: {
+                    text: messageText
+                  },
+                  options: {
+                    delay: 1200,
+                    presence: 'composing',
+                    linkPreview: false
+                  }
+                })
+              })
+
+              if (!res.ok) {
+                const errText = await res.text()
+                console.error(`❌ Erro no retorno da Evolution API para ${cleanedPhone}:`, errText)
+                sendSuccess = false
+              } else {
+                console.log(`✓ Lembrete enviado via WhatsApp com sucesso para o Admin: ${cleanedPhone}!`)
+              }
+            } catch (apiErr) {
+              console.error(`❌ Erro de conexão com a Evolution API para ${cleanedPhone}:`, apiErr.message)
+              sendSuccess = false
+            }
+          } else {
+            // Se as credenciais não estiverem configuradas, decai graciosamente para simulação
+            let cleanedPhone = recipientPhone.replace(/\D/g, '')
+            if (cleanedPhone.length === 10 || cleanedPhone.length === 11) {
+              cleanedPhone = '55' + cleanedPhone
+            }
+            console.log(`\n📲 [DISPARO DE WHATSAPP SIMULADO] (Evolution API não configurada)`)
+            console.log(`Para o Admin: ${cleanedPhone}`)
+            console.log(`Mensagem: "${messageText}"`)
+            console.log(`Status: 200 OK (Mensagem Enviada)\n`)
+          }
+        } else {
+          console.warn(`⚠️ [WORKER] Nenhum número receptor de WhatsApp cadastrado nas configurações da empresa ${tenant?.name || appointment.tenant_id}.`)
+          sendSuccess = false
         }
 
-        // Marcar como enviado no banco
-        await supabaseAuth
-          .from('appointments')
-          .update({ whatsapp_reminder_sent: true })
-          .eq('id', appointment.id)
+        // Marcar como enviado no banco se disparado (ou simulado) com sucesso
+        if (sendSuccess) {
+          await supabaseAuth
+            .from('appointments')
+            .update({ whatsapp_reminder_sent: true })
+            .eq('id', appointment.id)
+        }
       }
     } catch (err) {
       console.warn('Erro ao processar fila de lembretes no background:', err.message)
