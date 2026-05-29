@@ -1061,6 +1061,156 @@ app.post('/api/finance', authenticate, async (req, res) => {
    DOCUMENTS & TEMPLATES PRE-FILLING ENGINE
    ══════════════════════════════════════════════════ */
 
+app.get('/api/documents/templates', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { data, error } = await supabase
+      .from('document_templates')
+      .select('*')
+      .eq('tenant_id', req.tenantId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return res.json({ templates: data || [] })
+  } catch (err) {
+    console.error('Erro ao buscar modelos de documento:', err.message)
+    return res.status(500).json({ error: 'Erro ao buscar modelos de documento.' })
+  }
+})
+
+app.post('/api/documents/templates', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { title, raw_content } = req.body
+
+    if (!title || !raw_content) {
+      return res.status(400).json({ error: 'Os campos "title" e "raw_content" são obrigatórios.' })
+    }
+
+    // Extração automática das variáveis {{TAG}} do raw_content
+    const matches = [...raw_content.matchAll(/{{\s*([\w.-]+)\s*}}/g)]
+    const variables = [...new Set(matches.map(m => m[1].toUpperCase()))]
+
+    const { data, error } = await supabase
+      .from('document_templates')
+      .insert({
+        tenant_id: req.tenantId,
+        title,
+        raw_content,
+        variables
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return res.json({ template: data })
+  } catch (err) {
+    console.error('Erro ao criar modelo de documento:', err.message)
+    return res.status(500).json({ error: 'Erro ao criar modelo de documento.' })
+  }
+})
+
+app.delete('/api/documents/templates/:id', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { id } = req.params
+
+    const { error } = await supabase
+      .from('document_templates')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', req.tenantId)
+
+    if (error) throw error
+    return res.json({ success: true, message: 'Modelo de documento removido.' })
+  } catch (err) {
+    console.error('Erro ao deletar modelo de documento:', err.message)
+    return res.status(500).json({ error: 'Erro ao deletar modelo de documento.' })
+  }
+})
+
+app.get('/api/documents/filled', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    
+    // Buscar todos os documentos preenchidos.
+    // Usamos um select associado com document_templates para filtrar pelo tenant correto.
+    const { data, error } = await supabase
+      .from('filled_documents')
+      .select(`
+        id,
+        title,
+        filled_content,
+        pdf_url,
+        created_at,
+        template_id,
+        contact_id,
+        document_templates ( tenant_id, title )
+      `)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+
+    // Filtrar no backend para garantir que apenas os documentos do tenant ativo sejam expostos
+    const filtered = (data || []).filter(
+      (doc) => doc.document_templates?.tenant_id === req.tenantId
+    )
+    return res.json({ documents: filtered })
+  } catch (err) {
+    console.error('Erro ao buscar documentos preenchidos:', err.message)
+    return res.status(500).json({ error: 'Erro ao buscar documentos preenchidos.' })
+  }
+})
+
+app.delete('/api/documents/filled/:id', authenticate, async (req, res) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ error: 'Nenhum tenant associado ao usuário atual.' })
+    }
+
+    const supabase = createUserClient(req.accessToken)
+    const { id } = req.params
+
+    // Validar segurança (garantir que o documento pertença ao tenant do usuário ativo)
+    const { data: doc, error: getErr } = await supabase
+      .from('filled_documents')
+      .select('id, document_templates ( tenant_id )')
+      .eq('id', id)
+      .single()
+
+    if (getErr || !doc || doc.document_templates?.tenant_id !== req.tenantId) {
+      return res.status(403).json({ error: 'Documento não encontrado ou sem permissão de acesso.' })
+    }
+
+    const { error } = await supabase
+      .from('filled_documents')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+    return res.json({ success: true, message: 'Documento gerado excluído com sucesso.' })
+  } catch (err) {
+    console.error('Erro ao deletar documento preenchido:', err.message)
+    return res.status(500).json({ error: 'Erro ao deletar documento preenchido.' })
+  }
+})
+
 app.post('/api/documents/fill', authenticate, async (req, res) => {
   try {
     if (!req.tenantId) {

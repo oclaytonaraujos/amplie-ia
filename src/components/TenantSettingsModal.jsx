@@ -17,7 +17,7 @@ function applyAccentColor(color) {
   root.style.setProperty('--accent-rgb',  color.css)
 }
 
-export default function TenantSettingsModal({ onClose, session, initialTab }) {
+export default function TenantSettingsModal({ onClose, session, initialTab, inline = false }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'brand') // 'brand' | 'agent' | 'crm' | 'agenda' | 'documents' | 'integrations' | 'finance'
   
   // Settings State
@@ -34,6 +34,10 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
   const [templates, setTemplates] = useState([])
   const [newTemplateTitle, setNewTemplateTitle] = useState('')
   const [newTemplateContent, setNewTemplateContent] = useState('')
+  const [docSubTab, setDocSubTab] = useState('templates') // 'templates' | 'filled'
+  const [filledDocs, setFilledDocs] = useState([])
+  const [viewingDoc, setViewingDoc] = useState(null)
+  const [copied, setCopied] = useState(false)
 
   // CRM Contacts State
   const [contacts, setContacts] = useState([])
@@ -97,6 +101,8 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
     loadCRM()
     loadFinance()
     loadAppointments()
+    loadTemplates()
+    loadFilledDocs()
   }, [session])
 
   async function loadSettings() {
@@ -380,26 +386,144 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
     }
   }
 
-  return (
-    <div
-      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
+  // ======================= DOCUMENT TEMPLATES ACTIONS =======================
+  async function loadTemplates() {
+    try {
+      const res = await fetch('/api/documents/templates', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      setTemplates(data.templates || [])
+    } catch {
+      console.warn('Erro ao carregar templates.')
+    }
+  }
+
+  async function handleCreateTemplate() {
+    if (!newTemplateTitle.trim() || !newTemplateContent.trim()) {
+      showToast('Preencha os campos do modelo.', 'error')
+      return
+    }
+
+    try {
+      const res = await fetch('/api/documents/templates', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          title: newTemplateTitle,
+          raw_content: newTemplateContent
+        })
+      })
+
+      if (!res.ok) throw new Error()
+      
+      showToast('Modelo de contrato adicionado com sucesso!')
+      setNewTemplateTitle('')
+      setNewTemplateContent('')
+      loadTemplates()
+    } catch {
+      showToast('Erro ao salvar modelo de contrato.', 'error')
+    }
+  }
+
+  async function handleDeleteTemplate(id) {
+    if (!window.confirm('Excluir este modelo permanentemente?')) return
+    try {
+      const res = await fetch(`/api/documents/templates/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (!res.ok) throw new Error()
+      showToast('Modelo de contrato removido.')
+      loadTemplates()
+    } catch {
+      showToast('Erro ao remover modelo de contrato.', 'error')
+    }
+  }
+
+  // ======================= FILLED DOCUMENTS ACTIONS =======================
+  async function loadFilledDocs() {
+    try {
+      const res = await fetch('/api/documents/filled', {
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      setFilledDocs(data.documents || [])
+    } catch {
+      console.warn('Erro ao carregar documentos preenchidos.')
+    }
+  }
+
+  async function handleDeleteFilledDoc(id) {
+    if (!window.confirm('Excluir este documento gerado permanentemente?')) return
+    try {
+      const res = await fetch(`/api/documents/filled/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session.access_token}` }
+      })
+      if (!res.ok) throw new Error()
+      showToast('Documento gerado removido.')
+      loadFilledDocs()
+    } catch {
+      showToast('Erro ao remover documento.', 'error')
+    }
+  }
+
+  function handleCopyFilledDoc(text) {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    showToast('Conteúdo copiado!')
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const renderContainer = (children) => {
+    if (inline) {
+      return (
+        <div className="bg-[#1e1e1e] flex flex-col h-full w-full relative overflow-hidden select-none">
+          {children}
+        </div>
+      )
+    }
+    return (
       <div
-        className="bg-[#1e1e1e] rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col h-[85vh] border border-white/5"
-        onClick={(e) => e.stopPropagation()}
+        className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        onClick={onClose}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-white/8 shrink-0">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onClose}
-              className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
-            >
+        <div
+          className="bg-[#1e1e1e] rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col h-[85vh] border border-white/5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {children}
+        </div>
+      </div>
+    )
+  }
+
+  return renderContainer(
+    <>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-white/8 shrink-0">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onClose}
+            className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
+            title={inline ? "Voltar ao Chat" : "Fechar"}
+          >
+            {inline ? (
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M9.707 16.707a1 1 0 0 1-1.414 0l-6-6a1 1 0 0 1 0-1.414l6-6a1 1 0 0 1 1.414 1.414L5.414 9H17a1 1 0 1 1 0 2H5.414l4.293 4.293a1 1 0 0 1 0 1.414Z" clipRule="evenodd" />
+              </svg>
+            ) : (
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
                 <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
               </svg>
-            </button>
+            )}
+          </button>
             <h2 className="text-lg font-bold text-white tracking-wide">{name} & Agente Corporativo</h2>
           </div>
           <span className="text-[10px] text-pink-400 font-bold uppercase tracking-wider bg-pink-500/10 border border-pink-500/20 px-2 py-0.5 rounded-full">Painel Corporativo</span>
@@ -875,8 +999,8 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
 
           {/* ======================= DOCUMENTS TAB ======================= */}
           {activeTab === 'documents' && (
-            <div className="space-y-5 animate-fade-in max-w-3xl">
-              <div className="bg-[#222]/30 border border-white/5 rounded-2xl p-4 space-y-4">
+            <div className="space-y-5 animate-fade-in max-w-3xl flex flex-col h-full">
+              <div className="bg-[#222]/30 border border-white/5 rounded-2xl p-4 space-y-4 shrink-0">
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider">Criar Novo Modelo de Contrato / Entregável</h3>
                 <div className="space-y-3">
                   <input
@@ -895,26 +1019,54 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
                   />
                   <button
                     type="button"
-                    onClick={() => {
-                      if (!newTemplateTitle.trim() || !newTemplateContent.trim()) {
-                        showToast('Preencha os campos do modelo.', 'error')
-                        return
-                      }
-                      showToast('Modelo de contrato adicionado com sucesso na biblioteca!')
-                      setNewTemplateTitle('')
-                      setNewTemplateContent('')
-                    }}
-                    className="px-4 py-2 rounded-xl bg-pink-500/10 border border-pink-500/20 hover:bg-pink-500/20 text-pink-300 text-xs font-semibold"
+                    onClick={handleCreateTemplate}
+                    className="px-4 py-2 rounded-xl bg-pink-500 hover:bg-pink-400 text-white text-xs font-bold active:scale-95 transition-all shadow"
                   >
                     Salvar na Biblioteca
                   </button>
                 </div>
               </div>
 
-              <div>
-                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Modelos Prontos</h3>
-                <div className="p-4 bg-white/5 rounded-xl border border-white/5 text-center text-xs text-gray-500">
-                  Nenhum modelo customizado carregado na biblioteca ainda. A IA usará formatos padrão para gerar seus contratos.
+              <div className="space-y-3 flex flex-col flex-1">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Modelos na Biblioteca</h3>
+                <div className="space-y-3 overflow-y-auto max-h-[30vh] pr-1">
+                  {templates.length > 0 ? (
+                    templates.map(t => (
+                      <div key={t.id} className="bg-white/[0.02] border border-white/5 p-4 rounded-xl flex items-start justify-between group hover:border-pink-500/20 transition-all">
+                        <div className="space-y-1 truncate pr-4">
+                          <span className="text-sm font-bold text-white truncate block">{t.title}</span>
+                          <p className="text-xs text-gray-400 leading-relaxed truncate max-w-xl">{t.raw_content}</p>
+                          {t.variables && t.variables.length > 0 && (
+                            <div className="flex gap-1.5 items-center flex-wrap mt-2">
+                              <span className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Tags Extraídas:</span>
+                              {t.variables.map(v => (
+                                <span key={v} className="px-2 py-0.5 rounded text-[9px] font-bold bg-pink-500/10 text-pink-400 border border-pink-500/10">
+                                  {v}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        
+                        <div className="flex items-center shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTemplate(t.id)}
+                            className="p-1.5 bg-white/5 border border-white/5 hover:bg-red-500/10 rounded-lg text-gray-400 hover:text-red-400 transition-all"
+                            title="Remover Modelo"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                              <path fillRule="evenodd" d="M8.75 1A2.75 2.75 0 0 0 6 3.75V4H3a.75.75 0 0 0 0 1.5h14a.75.75 0 0 0 0-1.5h-3v-.25A2.75 2.75 0 0 0 11.25 1h-2.5ZM7.5 4h5v-.25a1.25 1.25 0 0 0-1.25-1.25h-2.5A1.25 1.25 0 0 0 7.5 3.75V4ZM5 6.75A.75.75 0 0 1 5.75 6h8.5a.75.75 0 0 1 .75.75v9.5A2.75 2.75 0 0 1 12.25 19h-4.5A2.75 2.75 0 0 1 5 16.25v-9.5Zm2.75 1.5a.75.75 0 0 0-1.5 0v6.5a.75.75 0 0 0 1.5 0v-6.5Zm5 .75a.75.75 0 0 1 .75-.75h.01a.75.75 0 0 1 .75.75v6.5a.75.75 0 0 1-.75.75H13.5a.75.75 0 0 1-.75-.75v-6.5Z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 bg-white/5 rounded-xl border border-white/5 text-center text-xs text-gray-500">
+                      Nenhum modelo customizado carregado na biblioteca ainda. A IA usará formatos padrão para gerar seus contratos.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1163,7 +1315,57 @@ export default function TenantSettingsModal({ onClose, session, initialTab }) {
             {isLoading ? 'Salvando...' : 'Salvar Aparência & Diretrizes'}
           </button>
         </div>
-      </div>
-    </div>
+
+      {/* Floating Pre-filled Document Viewer Modal */}
+      {viewingDoc && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+          <div className="bg-[#18181a] border border-white/10 rounded-2xl w-full max-w-2xl h-[75vh] flex flex-col overflow-hidden shadow-2xl animate-scale-in">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 shrink-0 bg-white/[0.01]">
+              <div className="space-y-0.5 pr-4 truncate">
+                <h3 className="text-sm font-bold text-white truncate">{viewingDoc.title}</h3>
+                <p className="text-[10px] text-gray-500 font-semibold">📅 Gerado em {new Date(viewingDoc.created_at).toLocaleString()}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingDoc(null)}
+                className="w-7 h-7 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/15 text-gray-300 hover:text-white transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-6 text-sm text-gray-300 whitespace-pre-wrap bg-black/10 select-text leading-relaxed font-mono">
+              {viewingDoc.filled_content}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5 shrink-0 bg-white/[0.01]">
+              <button
+                type="button"
+                onClick={() => handleCopyFilledDoc(viewingDoc.filled_content)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
+                  copied
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 font-bold'
+                    : 'bg-pink-500 hover:bg-pink-400 border-transparent text-white shadow'
+                }`}
+              >
+                {copied ? '✓ Copiado!' : 'Copiar Texto'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewingDoc(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-white/5 border border-white/8 hover:bg-white/10 text-gray-300 hover:text-white transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }

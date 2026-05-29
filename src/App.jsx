@@ -999,7 +999,7 @@ function SidebarItem({ icon, text, onClick, collapsed, active, dangerAction }) {
 
 /* ────────────────────────── Sidebar ────────────────────────────── */
 
-function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch, onSignOut, onOpenModal, onOpenTenantTab, user }) {
+function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, onClose, collapsed, onToggle, onOpenSearch, onSignOut, onOpenModal, onOpenTenantTab, user, activeView }) {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false)
   const profileMenuRef = useRef(null)
 
@@ -1119,6 +1119,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
             text="Minha Empresa"
             onClick={() => onOpenTenantTab?.('brand')}
             collapsed={collapsed}
+            active={activeView === 'tenant_brand'}
           />
           <SidebarItem 
             icon={
@@ -1129,6 +1130,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
             text="CRM Contatos"
             onClick={() => onOpenTenantTab?.('crm')}
             collapsed={collapsed}
+            active={activeView === 'tenant_crm'}
           />
           <SidebarItem 
             icon={
@@ -1139,6 +1141,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
             text="Agenda Compromissos"
             onClick={() => onOpenTenantTab?.('agenda')}
             collapsed={collapsed}
+            active={activeView === 'tenant_agenda'}
           />
           <SidebarItem 
             icon={
@@ -1149,6 +1152,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
             text="Biblioteca Entregáveis"
             onClick={() => onOpenTenantTab?.('documents')}
             collapsed={collapsed}
+            active={activeView === 'tenant_documents'}
           />
           <SidebarItem 
             icon={
@@ -1159,6 +1163,7 @@ function Sidebar({ conversations, activeId, onSelect, onNew, onDelete, isOpen, o
             text="Gestão Financeira"
             onClick={() => onOpenTenantTab?.('finance')}
             collapsed={collapsed}
+            active={activeView === 'tenant_finance'}
           />
         </div>
 
@@ -1323,10 +1328,11 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeModal, setActiveModal] = useState(null) // 'upgrade'|'personalization'|'profile'|'settings'|'help'
   const [tenantSettingsTab, setTenantSettingsTab] = useState('brand')
+  const [activeView, setActiveView] = useState('chat') // 'chat' | 'tenant_brand' | 'tenant_crm' | 'tenant_agenda' | 'tenant_documents' | 'tenant_finance' | 'tenant_integrations'
 
   function handleOpenTenantTab(tab) {
     setTenantSettingsTab(tab)
-    setActiveModal('tenant_settings')
+    setActiveView(`tenant_${tab}`)
   }
 
   // Apply saved accent color on mount
@@ -1466,12 +1472,14 @@ export default function App() {
     setMessages([])
     setInput('')
     setAttachedFiles([])
+    setActiveView('chat')
     textareaRef.current?.focus()
   }
 
   function handleSelectConversation(id) {
-    if (id === activeConversationId) return
+    if (id === activeConversationId && activeView === 'chat') return
     setAttachedFiles([])
+    setActiveView('chat')
     loadMessages(id)
   }
 
@@ -1940,9 +1948,6 @@ export default function App() {
       {activeModal === 'help' && (
         <HelpModal onClose={() => setActiveModal(null)} />
       )}
-      {activeModal === 'tenant_settings' && (
-        <TenantSettingsModal onClose={() => setActiveModal(null)} session={session} initialTab={tenantSettingsTab} />
-      )}
 
       {/* Sidebar */}
       <Sidebar
@@ -1957,9 +1962,16 @@ export default function App() {
         onToggle={() => setSidebarCollapsed((prev) => !prev)}
         onOpenSearch={() => setIsSearchModalOpen(true)}
         onSignOut={handleSignOut}
-        onOpenModal={(modal) => setActiveModal(modal)}
+        onOpenModal={(modal) => {
+          if (modal === 'tenant_settings') {
+            handleOpenTenantTab('brand')
+          } else {
+            setActiveModal(modal)
+          }
+        }}
         onOpenTenantTab={handleOpenTenantTab}
         user={user}
+        activeView={activeView}
       />
 
       {/* Main Chat Area */}
@@ -1975,182 +1987,193 @@ export default function App() {
           </button>
         </div>
 
-        {/* Messages Area */}
-        <main className="flex-1 overflow-y-auto">
-          {messages.length === 0 && !isLoading ? (
-            <WelcomeScreen onSuggestion={handleSuggestionClick} />
-          ) : (
-            <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
-              {messages.map((msg, i) => (
-                <MessageBubble
-                  key={i}
-                  role={msg.role}
-                  content={msg.content}
-                  index={i}
-                  isLast={i === messages.length - 1}
-                  isLoading={isLoading}
-                  onRegenerate={handleRegenerateResponse}
-                  onEdit={handleEditMessage}
-                />
-              ))}
-              {isLoading && <TypingIndicator />}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </main>
-
-        {/* Input Area */}
-        <footer className="flex-shrink-0 px-4 pb-4 pt-2">
-          <div className="max-w-3xl mx-auto">
-            {/* Attached Files Chips */}
-            {attachedFiles.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-2 px-1">
-                {attachedFiles.map((file, i) => {
-                  if (file.isImage) {
-                    return (
-                      <div key={i} className="relative rounded-lg overflow-hidden border border-white/10 group w-16 h-16 flex-shrink-0 shadow-sm">
-                        <img src={file.content} alt={file.name} className="w-full h-full object-cover" title={file.name} />
-                        <button
-                          onClick={() => removeFile(i)}
-                          className="absolute top-1 right-1 p-0.5 bg-black/60 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
-                          aria-label="Remover imagem"
-                        >
-                          <XMarkIcon />
-                        </button>
-                      </div>
-                    )
-                  }
-                  return (
-                    <div
+        {activeView !== 'chat' ? (
+          <TenantSettingsModal
+            onClose={() => setActiveView('chat')}
+            session={session}
+            initialTab={activeView.replace('tenant_', '')}
+            inline={true}
+          />
+        ) : (
+          <>
+            {/* Messages Area */}
+            <main className="flex-1 overflow-y-auto">
+              {messages.length === 0 && !isLoading ? (
+                <WelcomeScreen onSuggestion={handleSuggestionClick} />
+              ) : (
+                <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+                  {messages.map((msg, i) => (
+                    <MessageBubble
                       key={i}
-                      className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 group shadow-sm"
-                    >
-                      <FileIcon />
-                      <span className="truncate max-w-[150px]" title={file.name}>{file.name}</span>
-                      <button
-                        onClick={() => removeFile(i)}
-                        className="text-gray-500 hover:text-red-400 transition-colors"
-                        aria-label="Remover arquivo"
-                      >
-                        <XMarkIcon />
-                      </button>
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {/* Recording Indicator removed and integrated below */}
-
-            {/* Transcribing Indicator */}
-            {isTranscribing && (
-              <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-pink-500/10 border border-pink-500/20 rounded-2xl">
-                <div className="typing-dot" />
-                <div className="typing-dot" />
-                <div className="typing-dot" />
-                <span className="text-sm text-pink-400 ml-1">Transcrevendo áudio...</span>
-              </div>
-            )}
-
-            <div className={`relative flex items-end bg-[#2A2A2A] rounded-3xl border transition-all shadow-lg min-h-[60px] ${isRecording ? 'border-red-500/30 bg-red-500/[0.02]' : 'border-white/5 focus-within:border-white/15'}`}>
-              {/* Paperclip button */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                onChange={handleFileUpload}
-                className="hidden"
-                id="file-upload"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading || isRecording}
-                className="flex-shrink-0 w-10 h-10 flex items-center justify-center mb-1.5 ml-1.5 text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-full transition-all disabled:opacity-30"
-                aria-label="Anexar arquivo"
-                title="Anexar arquivo"
-              >
-                <PaperclipIcon />
-              </button>
-
-              {isRecording ? (
-                <div className="flex-1 flex items-center py-4 px-2 pr-28">
-                  <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse mr-3 shrink-0" />
-                  <span className="text-red-400 font-medium text-[15px] mr-3 whitespace-nowrap">Gravando áudio...</span>
-                  <span className="text-red-400/70 font-mono text-[15px]">{formatTime(recordingTime)}</span>
+                      role={msg.role}
+                      content={msg.content}
+                      index={i}
+                      isLast={i === messages.length - 1}
+                      isLoading={isLoading}
+                      onRegenerate={handleRegenerateResponse}
+                      onEdit={handleEditMessage}
+                    />
+                  ))}
+                  {isLoading && <TypingIndicator />}
+                  <div ref={messagesEndRef} />
                 </div>
-              ) : null}
+              )}
+            </main>
 
-              <textarea
-                id="chat-input"
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Envie uma mensagem..."
-                rows={1}
-                disabled={isRecording}
-                className={`flex-1 bg-transparent text-chat-text text-[15px] placeholder-gray-500 py-4 px-2 pr-24 outline-none max-h-[200px] overflow-y-auto leading-relaxed resize-none disabled:opacity-40 ${isRecording ? 'hidden' : 'block'}`}
-              />
-
-              {/* Mic + Send buttons */}
-              <div className="absolute right-2 bottom-2 flex items-center gap-1">
-                {isRecording ? (
-                  <button
-                    onClick={stopRecording}
-                    className="flex items-center gap-1.5 h-9 px-3 mr-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-full transition-colors font-medium text-[13px]"
-                    aria-label="Parar gravação"
-                    title="Parar gravação"
-                  >
-                    <StopCircleIcon className="w-4 h-4" />
-                    <span>Parar</span>
-                  </button>
-                ) : isLoading ? (
-                  <button
-                    onClick={handleStopGeneration}
-                    className="w-9 h-9 rounded-full flex items-center justify-center bg-pink-500 hover:bg-pink-400 active:bg-pink-600 text-white cursor-pointer transition-all duration-200"
-                    aria-label="Interromper geração"
-                    title="Interromper geração"
-                  >
-                    <StopCircleIcon className="w-5 h-5" />
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      onClick={startRecording}
-                      disabled={isLoading || isTranscribing}
-                      className="w-9 h-9 rounded-full flex items-center justify-center text-gray-500 hover:text-pink-400 hover:bg-white/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                      aria-label="Gravar áudio"
-                      title="Gravar áudio"
-                    >
-                      <MicrophoneIcon />
-                    </button>
-
-                    <button
-                      id="send-button"
-                      onClick={handleSendMessage}
-                      disabled={!canSend}
-                      aria-label="Enviar mensagem"
-                      className={`
-                        w-9 h-9 rounded-full
-                        flex items-center justify-center
-                        transition-all duration-200
-                        ${canSend
-                          ? 'bg-white text-gray-900 hover:bg-gray-200 cursor-pointer scale-100'
-                          : 'bg-gray-600 text-gray-400 cursor-not-allowed scale-90 opacity-40'
-                        }
-                      `}
-                    >
-                      <SendIcon />
-                    </button>
-                  </>
+            {/* Input Area */}
+            <footer className="flex-shrink-0 px-4 pb-4 pt-2">
+              <div className="max-w-3xl mx-auto">
+                {/* Attached Files Chips */}
+                {attachedFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2 px-1">
+                    {attachedFiles.map((file, i) => {
+                      if (file.isImage) {
+                        return (
+                          <div key={i} className="relative rounded-lg overflow-hidden border border-white/10 group w-16 h-16 flex-shrink-0 shadow-sm">
+                            <img src={file.content} alt={file.name} className="w-full h-full object-cover" title={file.name} />
+                            <button
+                              onClick={() => removeFile(i)}
+                              className="absolute top-1 right-1 p-0.5 bg-black/60 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                              aria-label="Remover imagem"
+                            >
+                              <XMarkIcon />
+                            </button>
+                          </div>
+                        )
+                      }
+                      return (
+                        <div
+                          key={i}
+                          className="flex items-center gap-1.5 bg-white/5 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-gray-300 group shadow-sm"
+                        >
+                          <FileIcon />
+                          <span className="truncate max-w-[150px]" title={file.name}>{file.name}</span>
+                          <button
+                            onClick={() => removeFile(i)}
+                            className="text-gray-500 hover:text-red-400 transition-colors"
+                            aria-label="Remover arquivo"
+                          >
+                            <XMarkIcon />
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
                 )}
+
+                {/* Recording Indicator removed and integrated below */}
+
+                {/* Transcribing Indicator */}
+                {isTranscribing && (
+                  <div className="flex items-center gap-2 mb-2 px-3 py-2 bg-pink-500/10 border border-pink-500/20 rounded-2xl">
+                    <div className="typing-dot" />
+                    <div className="typing-dot" />
+                    <div className="typing-dot" />
+                    <span className="text-sm text-pink-400 ml-1">Transcrevendo áudio...</span>
+                  </div>
+                )}
+
+                <div className={`relative flex items-end bg-[#2A2A2A] rounded-3xl border transition-all shadow-lg min-h-[60px] ${isRecording ? 'border-red-500/30 bg-red-500/[0.02]' : 'border-white/5 focus-within:border-white/15'}`}>
+                  {/* Paperclip button */}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    id="file-upload"
+                  />
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading || isRecording}
+                    className="flex-shrink-0 w-10 h-10 flex items-center justify-center mb-1.5 ml-1.5 text-gray-500 hover:text-gray-300 hover:bg-white/5 rounded-full transition-all disabled:opacity-30"
+                    aria-label="Anexar arquivo"
+                    title="Anexar arquivo"
+                  >
+                    <PaperclipIcon />
+                  </button>
+
+                  {isRecording ? (
+                    <div className="flex-1 flex items-center py-4 px-2 pr-28">
+                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse mr-3 shrink-0" />
+                      <span className="text-red-400 font-medium text-[15px] mr-3 whitespace-nowrap">Gravando áudio...</span>
+                      <span className="text-red-400/70 font-mono text-[15px]">{formatTime(recordingTime)}</span>
+                    </div>
+                  ) : null}
+
+                  <textarea
+                    id="chat-input"
+                    ref={textareaRef}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Envie uma mensagem..."
+                    rows={1}
+                    disabled={isRecording}
+                    className={`flex-1 bg-transparent text-chat-text text-[15px] placeholder-gray-500 py-4 px-2 pr-24 outline-none max-h-[200px] overflow-y-auto leading-relaxed resize-none disabled:opacity-40 ${isRecording ? 'hidden' : 'block'}`}
+                  />
+
+                  {/* Mic + Send buttons */}
+                  <div className="absolute right-2 bottom-2 flex items-center gap-1">
+                    {isRecording ? (
+                      <button
+                        onClick={stopRecording}
+                        className="flex items-center gap-1.5 h-9 px-3 mr-1 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-full transition-colors font-medium text-[13px]"
+                        aria-label="Parar gravação"
+                        title="Parar gravação"
+                      >
+                        <StopCircleIcon className="w-4 h-4" />
+                        <span>Parar</span>
+                      </button>
+                    ) : isLoading ? (
+                      <button
+                        onClick={handleStopGeneration}
+                        className="w-9 h-9 rounded-full flex items-center justify-center bg-pink-500 hover:bg-pink-400 active:bg-pink-600 text-white cursor-pointer transition-all duration-200"
+                        aria-label="Interromper geração"
+                        title="Interromper geração"
+                      >
+                        <StopCircleIcon className="w-5 h-5" />
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={startRecording}
+                          disabled={isLoading || isTranscribing}
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-gray-500 hover:text-pink-400 hover:bg-white/5 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                          aria-label="Gravar áudio"
+                          title="Gravar áudio"
+                        >
+                          <MicrophoneIcon />
+                        </button>
+
+                        <button
+                          id="send-button"
+                          onClick={handleSendMessage}
+                          disabled={!canSend}
+                          aria-label="Enviar mensagem"
+                          className={`
+                            w-9 h-9 rounded-full
+                            flex items-center justify-center
+                            transition-all duration-200
+                            ${canSend
+                              ? 'bg-white text-gray-900 hover:bg-gray-200 cursor-pointer scale-100'
+                              : 'bg-gray-600 text-gray-400 cursor-not-allowed scale-90 opacity-40'
+                            }
+                          `}
+                        >
+                          <SendIcon />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <p className="text-center text-[11px] text-gray-500 opacity-60 mt-3 select-none tracking-wide">
+                  A Amplie IA pode cometer erros. Confira informações importantes antes de usar.
+                </p>
               </div>
-            </div>
-            <p className="text-center text-[11px] text-gray-500 opacity-60 mt-3 select-none tracking-wide">
-              A Amplie IA pode cometer erros. Confira informações importantes antes de usar.
-            </p>
-          </div>
-        </footer>
+            </footer>
+          </>
+        )}
       </div>
     </div>
   )
